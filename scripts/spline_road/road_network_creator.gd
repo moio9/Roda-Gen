@@ -21,72 +21,17 @@ extends Node3D
 @export_subgroup("Outer Walls")
 @export_range(0.0, 30.0, 0.1) var outer_wall_height := 0.0
 @export var outer_wall_material_override: Material
-@export_subgroup("Terrain")
-@export_range(0.0, 50.0, 0.1) var terrain_left_width := 0.0
-@export_range(0.0, 50.0, 0.1) var terrain_right_width := 0.0
-@export_range(-1.0, 2.0, 0.001) var terrain_road_clearance := 0.02
-@export_range(0.1, 1.0, 0.05) var terrain_detection_width_scale := 1.0
-@export_range(0.05, 5.0, 0.05) var terrain_growth_scan_step := 0.25
-@export_range(0.0, 20.0, 0.05) var terrain_growth_max_delta_per_row := 1.25
-@export_range(0.0, 200.0, 0.1) var terrain_skirt_depth := 0.0
-@export_range(1, 12, 1) var terrain_skirt_segments := 3
-@export_range(0.0, 50.0, 0.05) var terrain_skirt_outward := 1.0
-@export_range(0.1, 4.0, 0.1) var terrain_skirt_profile := 1.4
-@export_range(0.0, 89.0, 0.5) var terrain_skirt_soften_slope_deg := 12.0
-@export_range(0.0, 30.0, 0.05) var terrain_skirt_soften_max_drop := 1.0
-@export_range(0.1, 4.0, 0.1) var terrain_skirt_soften_power := 1.2
-@export_range(1, 12, 1) var terrain_skirt_soften_area_rings := 3
-@export_range(0.1, 4.0, 0.1) var terrain_skirt_soften_area_falloff := 1.6
-@export_range(0, 4, 1) var terrain_skirt_soften_row_smooth_passes := 1
-@export_range(1, 100, 1) var terrain_subdivisions := 1
-@export_subgroup("Terrain Adaptive Subdivisions")
-@export var terrain_adaptive_subdivisions_enabled := true
-@export_range(0.0, 2.0, 0.01) var terrain_adaptive_subdivisions_per_meter := 0.15
-@export_range(0.1, 4.0, 0.1) var terrain_adaptive_noise_quality := 1.5
-@export_range(1, 256, 1) var terrain_adaptive_subdivisions_max := 80
-@export var terrain_noise_enabled := false
-@export_range(0.0, 30.0, 0.01) var terrain_noise_amplitude := 0.0
-@export_range(0.001, 2.0, 0.001) var terrain_noise_frequency := 0.06
-@export var terrain_noise_seed := 1337
-@export_range(0.0, 4.0, 0.1) var terrain_noise_falloff := 1.5
-@export_subgroup("Terrain Heightmap CPU")
-@export var terrain_heightmap_enabled := false
-@export var terrain_heightmap_texture: Texture2D
-@export_range(-100.0, 100.0, 0.01) var terrain_heightmap_amplitude := 0.0
-@export var terrain_heightmap_signed := true
-@export var terrain_heightmap_invert := false
-@export var terrain_heightmap_uv_scale := Vector2(0.03, 0.03)
-@export var terrain_heightmap_uv_offset := Vector2.ZERO
-@export_range(0.0, 4.0, 0.1) var terrain_heightmap_falloff := 1.5
-@export_enum("Balanced (Cut+Fill)", "Cut Only", "Fill Only") var terrain_cut_fill_mode := 0
-@export var terrain_artifact_safe_stitch := true
-@export_range(0, 4, 1) var terrain_chain_smooth_passes := 1
-@export var terrain_material_override: Material
-@export_range(0.01, 20.0, 0.01) var uv_length_scale := 0.2
 @export_group("Mesh Orientation")
 @export var invert_faces := false
 @export var material_override: Material
-
-@export_group("Terrain Fill Boolean")
-@export var terrain_boolean_fill_enabled := false
-@export_range(0.0, 500.0, 0.1) var terrain_boolean_padding := 25.0
-@export_range(-100.0, 100.0, 0.01) var terrain_boolean_base_height := 0.0
-@export_range(0.001, 1.0, 0.001) var terrain_boolean_height_match_epsilon := 0.05
-@export_range(0.0, 2.0, 0.01) var terrain_boolean_height_match_max_distance := 0.2
-@export_enum("Boolean Cleanup", "Fill (Blender-like)") var terrain_boolean_solver_mode := 1
-@export_enum("Outer (Lane+Shoulder+Sidewalk)", "Lane Only") var terrain_boolean_clip_width_mode := 1
-
-@export_group("Terrain Fill Rectangle")
-@export var terrain_rect_fill_enabled := false
-@export_range(0.1, 20.0, 0.1) var terrain_rect_fill_cell_size := 1.0
-@export_range(1000, 4000000, 1000) var terrain_rect_fill_max_cells := 250000
-@export_range(0.0, 500.0, 0.1) var terrain_rect_fill_padding := 25.0
-@export_range(-100.0, 100.0, 0.01) var terrain_rect_fill_base_height := 0.0
-@export_range(0.001, 1.0, 0.001) var terrain_rect_fill_height_match_epsilon := 0.05
-@export_range(0.0, 2.0, 0.01) var terrain_rect_fill_height_match_max_distance := 0.2
+@export_group("Terrain Fill")
+@export_enum("Disabled", "Rectangle Fill", "Boolean Fill") var terrain_fill_algorithm := 0: set = _set_terrain_fill_algorithm
+@export_range(-100.0, 100.0, 0.01) var terrain_fill_base_height := 0.0
+@export_range(0.001, 1.0, 0.001) var terrain_fill_height_match_epsilon := 0.05
+@export_range(0.0, 200.0, 0.01) var terrain_fill_height_match_max_distance := 0.2
+@export_subgroup("Rectangle")
+@export_range(0.1, 50.0, 0.1) var terrain_rect_fill_cell_size := 1.0
 @export_range(0.0, 2.0, 0.001) var terrain_rect_fill_road_margin := 0.0
-@export_enum("Outer (Lane+Shoulder+Sidewalk)", "Lane Only") var terrain_rect_fill_clip_width_mode := 1
-
 @export_group("Weld")
 @export_range(0.1, 30.0, 0.1) var endpoint_snap_distance := 2.0
 @export var allow_endpoint_to_midpath := true
@@ -105,23 +50,71 @@ extends Node3D
 @export var auto_regenerate_in_editor := true
 @export var regenerate_now := false: set = _set_regenerate_now
 @export var debug_generation_logs := true
+@export_group("Terrain Influence Debug")
+@export var terrain_influence_debug_draw := false: set = _set_terrain_influence_debug_draw
+@export var terrain_influence_debug_color := Color(0.96, 0.32, 0.1, 1.0)
+@export_range(0.0, 5.0, 0.01) var terrain_influence_debug_lift := 0.1
 
 const MESH_NODE_NAME := "GeneratedSplineRoadWelded"
 const LEGACY_MESH_NODE_NAME := "GeneratedSplineRoad"
+const TERRAIN_INFLUENCE_DEBUG_NODE_NAME := "TerrainInfluenceDebugBands"
 const STRIP_SIDE_BOTH := 0
 const STRIP_SIDE_LEFT := -1
 const STRIP_SIDE_RIGHT := 1
+const TERRAIN_FILL_DISABLED := 0
+const TERRAIN_FILL_RECTANGLE := 1
+const TERRAIN_FILL_BOOLEAN := 2
 const TERRAIN_CUT_FILL_BALANCED := 0
 const TERRAIN_CUT_FILL_CUT_ONLY := 1
 const TERRAIN_CUT_FILL_FILL_ONLY := 2
-const TERRAIN_BOOLEAN_SOLVER_BOOLEAN := 0
-const TERRAIN_BOOLEAN_SOLVER_FILL := 1
-const TERRAIN_BOOLEAN_CLIP_OUTER := 0
-const TERRAIN_BOOLEAN_CLIP_LANE_ONLY := 1
-const TERRAIN_RECT_CLIP_OUTER := 0
-const TERRAIN_RECT_CLIP_LANE_ONLY := 1
+const TERRAIN_RECT_FILL_MAX_TRIANGLES := 2500000
+const TERRAIN_INFLUENCE_DEFAULT_WIDTH := 6.0
+const TERRAIN_INFLUENCE_DEFAULT_BLEND := 3.0
+const TERRAIN_INFLUENCE_DEFAULT_STRENGTH := 1.0
 
+# Legacy terrain defaults kept internal (not exposed in Inspector).
+var terrain_left_width := 0.0
+var terrain_right_width := 0.0
+var terrain_road_clearance := 0.02
+var terrain_detection_width_scale := 1.0
+var terrain_growth_scan_step := 0.25
+var terrain_growth_max_delta_per_row := 1.25
+var terrain_skirt_depth := 0.0
+var terrain_skirt_segments := 3
+var terrain_skirt_outward := 1.0
+var terrain_skirt_profile := 1.4
+var terrain_skirt_soften_slope_deg := 12.0
+var terrain_skirt_soften_max_drop := 1.0
+var terrain_skirt_soften_power := 1.2
+var terrain_skirt_soften_area_rings := 3
+var terrain_skirt_soften_area_falloff := 1.6
+var terrain_skirt_soften_row_smooth_passes := 1
+var terrain_subdivisions := 1
+var terrain_adaptive_subdivisions_enabled := true
+var terrain_adaptive_subdivisions_per_meter := 0.15
+var terrain_adaptive_noise_quality := 1.5
+var terrain_adaptive_subdivisions_max := 80
+var terrain_noise_enabled := false
+var terrain_noise_amplitude := 0.0
+var terrain_noise_frequency := 0.06
+var terrain_noise_seed := 1337
+var terrain_noise_falloff := 1.5
+var terrain_heightmap_enabled := false
+var terrain_heightmap_texture: Texture2D
+var terrain_heightmap_amplitude := 0.0
+var terrain_heightmap_signed := true
+var terrain_heightmap_invert := false
+var terrain_heightmap_uv_scale := Vector2(0.03, 0.03)
+var terrain_heightmap_uv_offset := Vector2.ZERO
+var terrain_heightmap_falloff := 1.5
+var terrain_cut_fill_mode := 0
+var terrain_artifact_safe_stitch := true
+var terrain_chain_smooth_passes := 1
+var terrain_material_override: Material
+var uv_length_scale := 0.2
 var _last_signature := ""
+var _terrain_influence_strips: Array = []
+var _terrain_influence_loops: Array = []
 
 
 func _ready() -> void:
@@ -154,6 +147,21 @@ func _set_regenerate_now(value: bool) -> void:
 		regenerate()
 
 
+func _set_terrain_influence_debug_draw(value: bool) -> void:
+	terrain_influence_debug_draw = value
+	if not value:
+		_clear_terrain_influence_debug_node()
+	_last_signature = ""
+	if _can_generate():
+		regenerate()
+
+
+func _set_terrain_fill_algorithm(value: int) -> void:
+	terrain_fill_algorithm = value
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+
+
 func _set_adaptive_sampling_advanced(value: bool) -> void:
 	adaptive_sampling_advanced = value
 	if Engine.is_editor_hint():
@@ -166,6 +174,20 @@ func _validate_property(property: Dictionary) -> void:
 		or property.name == "adaptive_sampling_radius_scale"
 		or property.name == "adaptive_sampling_offset"
 	) and not adaptive_sampling_advanced:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
+		property.name == "terrain_fill_base_height"
+		or property.name == "terrain_fill_height_match_epsilon"
+		or property.name == "terrain_fill_height_match_max_distance"
+	) and terrain_fill_algorithm == TERRAIN_FILL_DISABLED:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
+		property.name == "terrain_rect_fill_cell_size"
+	) and terrain_fill_algorithm != TERRAIN_FILL_RECTANGLE:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
+		property.name == "terrain_rect_fill_road_margin"
+	) and terrain_fill_algorithm != TERRAIN_FILL_RECTANGLE:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 
 
@@ -190,6 +212,7 @@ func regenerate() -> void:
 			push_warning("SplineRoadWelded: no valid Path3D found in source_paths.")
 		_debug_log("no valid paths, clearing generated mesh node.")
 		_clear_mesh_node()
+		_clear_terrain_influence_debug_node()
 		return
 
 	var verts := PackedVector3Array()
@@ -214,6 +237,8 @@ func regenerate() -> void:
 	path_weld_strip_enabled.resize(paths.size())
 	var path_weld_strip_length: Array = []
 	path_weld_strip_length.resize(paths.size())
+	_terrain_influence_strips = []
+	_terrain_influence_loops = []
 
 	for path_idx in range(paths.size()):
 		var path := paths[path_idx]
@@ -228,6 +253,7 @@ func regenerate() -> void:
 		var path_adaptive_step_scale: float = _resolve_path_adaptive_sampling_step_scale(path)
 		var path_adaptive_radius_scale: float = _resolve_path_adaptive_sampling_radius_scale(path)
 		var path_adaptive_offset: float = _resolve_path_adaptive_sampling_offset(path)
+		var terrain_influence_only := _path_is_terrain_influence_only(path)
 		path_weld_snap[path_idx] = weld_snap
 		path_weld_allow_midpath[path_idx] = weld_allow_midpath
 		path_weld_strip_enabled[path_idx] = weld_strip_enabled
@@ -284,6 +310,15 @@ func regenerate() -> void:
 				% [path_idx, path_adaptive_enabled, path_has_adaptive_override, path_adaptive_advanced, anchors.size(), local_step, local_radius, distances.size()]
 			)
 		if distances.size() < 2:
+			path_rows[path_idx] = rows_info
+			continue
+		if terrain_influence_only:
+			var strip := _build_terrain_influence_strip(path, curve, path_to_mesh, distances)
+			if not strip.is_empty():
+				_terrain_influence_strips.push_back(strip)
+				var loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
+				if loop.size() >= 3:
+					_terrain_influence_loops.push_back(loop)
 			path_rows[path_idx] = rows_info
 			continue
 
@@ -455,6 +490,8 @@ func regenerate() -> void:
 			_add_socket_unique(sockets, socket_keys, rows_info[0], true)
 			_add_socket_unique(sockets, socket_keys, rows_info[rows_info.size() - 1], true)
 
+	_update_terrain_influence_debug_visual()
+
 	var endpoint_count := sockets.size()
 	if endpoint_count > 0:
 		_augment_with_midpath_sockets(
@@ -481,7 +518,7 @@ func regenerate() -> void:
 	if sockets.size() < minimum_connections:
 		if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
 			_append_lane_fallback_from_path_rows(lane_indices, path_rows)
-		if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
+		if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty() and _terrain_influence_strips.is_empty():
 			_debug_log("no indices after fallback (low sockets branch), clearing mesh node.")
 			_clear_mesh_node()
 			return
@@ -490,6 +527,8 @@ func regenerate() -> void:
 			% [verts.size(), lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size(), terrain_indices.size(), wall_indices.size()]
 		)
 		_append_terrain_with_mode(verts, normals, uvs, terrain_indices, path_rows, lane_indices, shoulder_indices, sidewalk_indices)
+		_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
+		_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
 		_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
 		_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
 		_last_signature = _build_signature()
@@ -507,6 +546,8 @@ func regenerate() -> void:
 			% [verts.size(), lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size(), terrain_indices.size(), wall_indices.size()]
 		)
 		_append_terrain_with_mode(verts, normals, uvs, terrain_indices, path_rows, lane_indices, shoulder_indices, sidewalk_indices)
+		_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
+		_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
 		_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
 		_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
 		_last_signature = _build_signature()
@@ -682,7 +723,7 @@ func regenerate() -> void:
 
 	if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
 		_append_lane_fallback_from_path_rows(lane_indices, path_rows)
-	if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
+	if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty() and _terrain_influence_strips.is_empty():
 		_debug_log("no indices after weld branch fallback, clearing mesh node.")
 		_clear_mesh_node()
 		return
@@ -702,6 +743,8 @@ func regenerate() -> void:
 		sidewalk_indices,
 		stripped_side_indices
 	)
+	_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
+	_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
 	_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
 	_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
 	_last_signature = _build_signature()
@@ -1446,7 +1489,7 @@ func _append_terrain_with_mode(
 	sidewalk_indices: PackedInt32Array,
 	blocked_side_vertices: Dictionary = {}
 ) -> void:
-	if terrain_rect_fill_enabled:
+	if terrain_fill_algorithm == TERRAIN_FILL_RECTANGLE:
 		var rect_vert_start := verts.size()
 		var rect_normal_start := normals.size()
 		var rect_uv_start := uvs.size()
@@ -1470,9 +1513,9 @@ func _append_terrain_with_mode(
 		verts.resize(rect_vert_start)
 		normals.resize(rect_normal_start)
 		uvs.resize(rect_uv_start)
-		_debug_log("rect fill produced 0 terrain tris, fallback next mode")
+		_debug_log("rect fill produced 0 terrain tris, fallback to path-row terrain")
 
-	if terrain_boolean_fill_enabled:
+	if terrain_fill_algorithm == TERRAIN_FILL_BOOLEAN:
 		var vert_start := verts.size()
 		var normal_start := normals.size()
 		var uv_start := uvs.size()
@@ -1601,50 +1644,23 @@ func _append_terrain_from_rect_fill(
 	)
 	var mesh_road_loops_all: Array = boundary_data.get("loops", [])
 	var boundary_points: Array = boundary_data.get("points", [])
+	_append_terrain_influence_boundary_points(boundary_points)
 	if boundary_points.is_empty():
 		return
 
-	var lane_only_clip := terrain_rect_fill_clip_width_mode == TERRAIN_RECT_CLIP_LANE_ONLY
-	var road_loops := _build_path_row_boundary_polygons_xz_mode(verts, path_rows, lane_only_clip)
+	var road_loops := _build_path_row_boundary_polygons_xz_mode(verts, path_rows, false)
 	var boundary_source := "path-rows"
 	if road_loops.is_empty():
-		if lane_only_clip:
-			var lane_only_boundary := _extract_road_boundary_loops_xz(
-				verts,
-				lane_indices,
-				PackedInt32Array(),
-				PackedInt32Array()
-			)
-			road_loops = lane_only_boundary.get("loops", [])
-			boundary_source = "lane-surfaces"
-		else:
-			road_loops = mesh_road_loops_all
-			boundary_source = "all-surfaces"
+		road_loops = mesh_road_loops_all
+		boundary_source = "all-surfaces"
+	if not _terrain_influence_loops.is_empty():
+		for loop in _terrain_influence_loops:
+			road_loops.push_back(loop)
+		boundary_source += "+influence"
+	if road_loops.is_empty() and _terrain_influence_strips.is_empty():
+		return
 	if road_loops.is_empty():
-		return
-
-	var min_x := INF
-	var max_x := -INF
-	var min_z := INF
-	var max_z := -INF
-	for p_raw in boundary_points:
-		var p: Vector3 = p_raw
-		min_x = minf(min_x, p.x)
-		max_x = maxf(max_x, p.x)
-		min_z = minf(min_z, p.z)
-		max_z = maxf(max_z, p.z)
-	if min_x >= max_x or min_z >= max_z:
-		return
-
-	var padding := maxf(0.0, terrain_rect_fill_padding)
-	var outer := PackedVector2Array([
-		Vector2(min_x - padding, min_z - padding),
-		Vector2(max_x + padding, min_z - padding),
-		Vector2(max_x + padding, max_z + padding),
-		Vector2(min_x - padding, max_z + padding),
-	])
-	if Geometry2D.is_polygon_clockwise(outer):
-		outer.reverse()
+		boundary_source = "influence-only"
 
 	var road_margin := maxf(0.0, terrain_rect_fill_road_margin)
 	var road_parts: Array = []
@@ -1656,14 +1672,14 @@ func _append_terrain_from_rect_fill(
 			var offset_parts: Array = Geometry2D.offset_polygon(loop, road_margin)
 			if not offset_parts.is_empty():
 				loop = _pick_largest_polygon_part_xz(offset_parts)
-				loop = _compact_polygon2d_xz(loop, 0.001)
+			loop = _compact_polygon2d_xz(loop, 0.001)
 		if loop.size() < 3:
 			continue
 		road_parts.push_back(loop)
-	if road_parts.is_empty():
-		return
 
-	var fill_parts: Array = [outer]
+	var fill_parts := _build_outer_rect_fill_parts_from_road_parts(road_parts, boundary_points)
+	if fill_parts.is_empty():
+		return
 	for part_raw in road_parts:
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
@@ -1674,9 +1690,8 @@ func _append_terrain_from_rect_fill(
 	if fill_parts.is_empty():
 		return
 
-	var snap_eps := maxf(0.0001, terrain_rect_fill_height_match_epsilon)
-	var max_dist := maxf(0.0, terrain_rect_fill_height_match_max_distance)
-	var base_y := terrain_rect_fill_base_height + y_offset
+	var snap_eps := maxf(0.0001, terrain_fill_height_match_epsilon)
+	var base_y := terrain_fill_base_height + y_offset
 	var boundary_height_map: Dictionary = {}
 	for p_raw in boundary_points:
 		var p: Vector3 = p_raw
@@ -1686,10 +1701,14 @@ func _append_terrain_from_rect_fill(
 		sum_and_count[1] = int(sum_and_count[1]) + 1
 		boundary_height_map[key] = sum_and_count
 
-	var max_edge_len := maxf(0.2, terrain_rect_fill_cell_size)
-	var tri_limit := maxi(1000, terrain_rect_fill_max_cells)
-	var tri_candidates := 0
-	var tri_kept := 0
+	var heightmap_image := _build_fill_heightmap_image()
+	var base_edge_len := maxf(0.2, terrain_rect_fill_cell_size)
+	var tri_limit := TERRAIN_RECT_FILL_MAX_TRIANGLES
+	var tri_stats := {
+		"tri_candidates": 0,
+		"tri_kept": 0,
+	}
+	var edge_midpoint_height_cache: Dictionary = {}
 	var limit_reached := false
 	for poly_raw in fill_parts:
 		if limit_reached:
@@ -1697,34 +1716,16 @@ func _append_terrain_from_rect_fill(
 		var poly: PackedVector2Array = _compact_polygon2d_xz(poly_raw, 0.001)
 		if poly.size() < 3:
 			continue
-		var dense_poly := _resample_polygon_edges_for_boolean_fill(poly, max_edge_len)
+		var dense_poly := _resample_polygon_edges_for_boolean_fill(poly, base_edge_len)
 		if dense_poly.size() >= 3:
 			poly = dense_poly
 		var tri_local: PackedInt32Array = Geometry2D.triangulate_polygon(poly)
 		if tri_local.size() < 3:
 			continue
 
-		var base_idx := verts.size()
-		for p2 in poly:
-			var y := _sample_rect_fill_vertex_height(
-				p2,
-				boundary_height_map,
-				boundary_points,
-				base_y,
-				snap_eps,
-				max_dist
-			)
-			var p3 := Vector3(p2.x, y, p2.y)
-			verts.push_back(p3)
-			normals.push_back(Vector3.UP)
-			uvs.push_back(Vector2(p3.x, p3.z) * uv_length_scale)
-
+		var root_tris: Array = []
 		var tri_count := tri_local.size() - (tri_local.size() % 3)
 		for i in range(0, tri_count, 3):
-			tri_candidates += 1
-			if tri_kept >= tri_limit:
-				limit_reached = true
-				break
 			var local_a := int(tri_local[i])
 			var local_b := int(tri_local[i + 1])
 			var local_c := int(tri_local[i + 2])
@@ -1732,18 +1733,75 @@ func _append_terrain_from_rect_fill(
 				continue
 			if local_a >= poly.size() or local_b >= poly.size() or local_c >= poly.size():
 				continue
-			var a := base_idx + local_a
-			var b := base_idx + local_b
-			var c := base_idx + local_c
-			if invert_faces:
-				terrain_indices.push_back(a)
-				terrain_indices.push_back(b)
-				terrain_indices.push_back(c)
-			else:
-				terrain_indices.push_back(a)
-				terrain_indices.push_back(c)
-				terrain_indices.push_back(b)
-			tri_kept += 1
+			var pa2: Vector2 = poly[local_a]
+			var pb2: Vector2 = poly[local_b]
+			var pc2: Vector2 = poly[local_c]
+			root_tris.push_back(PackedVector2Array([pa2, pb2, pc2]))
+
+		if root_tris.is_empty():
+			continue
+		var max_conform_iters := 1
+		for _iter in range(max_conform_iters):
+			var changed := false
+			for tri_raw in root_tris:
+				var tri: PackedVector2Array = tri_raw
+				if tri.size() < 3:
+					continue
+				if _precompute_fill_split_edges(
+					tri[0],
+					tri[1],
+					tri[2],
+					boundary_height_map,
+					boundary_points,
+					base_y,
+					road_parts,
+					heightmap_image,
+					base_edge_len,
+					edge_midpoint_height_cache,
+					0
+				):
+					changed = true
+			if not changed:
+				break
+
+		for tri_raw in root_tris:
+			if int(tri_stats.get("tri_kept", 0)) >= tri_limit:
+				limit_reached = true
+				break
+			var tri: PackedVector2Array = tri_raw
+			if tri.size() < 3:
+				continue
+			var pa2: Vector2 = tri[0]
+			var pb2: Vector2 = tri[1]
+			var pc2: Vector2 = tri[2]
+			var y_a := _sample_fill_vertex_height(pa2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			var y_b := _sample_fill_vertex_height(pb2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			var y_c := _sample_fill_vertex_height(pc2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			_append_fill_triangle_adaptive(
+				pa2,
+				pb2,
+				pc2,
+				verts,
+				normals,
+				uvs,
+				terrain_indices,
+				boundary_height_map,
+				boundary_points,
+				base_y,
+				road_parts,
+				heightmap_image,
+				y_a,
+				y_b,
+				y_c,
+				base_edge_len,
+				tri_limit,
+				tri_stats,
+				edge_midpoint_height_cache,
+				0
+			)
+			if int(tri_stats.get("tri_kept", 0)) >= tri_limit:
+				limit_reached = true
+				break
 
 	_debug_log(
 		"rect fill source=%s parts=%s area=%.2f candidates=%s kept=%s clip_mode=%s"
@@ -1751,39 +1809,11 @@ func _append_terrain_from_rect_fill(
 			boundary_source,
 			fill_parts.size(),
 			_polygon_parts_total_area_abs_xz(fill_parts),
-			tri_candidates,
-			tri_kept,
-			"lane-only" if lane_only_clip else "outer"
+			int(tri_stats.get("tri_candidates", 0)),
+			int(tri_stats.get("tri_kept", 0)),
+			"outer"
 		]
 	)
-
-
-func _sample_rect_fill_vertex_height(
-	point: Vector2,
-	boundary_height_map: Dictionary,
-	boundary_points: Array,
-	default_y: float,
-	snap_eps: float,
-	max_dist: float
-) -> float:
-	var key := Vector2i(int(round(point.x / snap_eps)), int(round(point.y / snap_eps)))
-	if boundary_height_map.has(key):
-		var sum_and_count: Array = boundary_height_map.get(key, [default_y, 1])
-		var count := maxi(1, int(sum_and_count[1]))
-		return float(sum_and_count[0]) / float(count)
-
-	if max_dist <= 0.0001:
-		return default_y
-
-	var best_y := default_y
-	var best_dist := max_dist
-	for p_raw in boundary_points:
-		var p: Vector3 = p_raw
-		var d := Vector2(p.x, p.z).distance_to(point)
-		if d <= best_dist:
-			best_dist = d
-			best_y = p.y
-	return best_y
 
 
 func _append_terrain_from_boolean_fill(
@@ -1805,57 +1835,29 @@ func _append_terrain_from_boolean_fill(
 	)
 	var mesh_road_loops: Array = boundary_data.get("loops", [])
 	var boundary_points: Array = boundary_data.get("points", [])
+	_append_terrain_influence_boundary_points(boundary_points)
 	var road_loops := _build_path_row_boundary_polygons_xz(verts, path_rows)
 	if road_loops.is_empty():
 		road_loops = mesh_road_loops
 		boundary_source = "all-surfaces"
-	var overlap_shoulder_indices := shoulder_indices
-	var overlap_sidewalk_indices := sidewalk_indices
-	if terrain_boolean_clip_width_mode == TERRAIN_BOOLEAN_CLIP_LANE_ONLY:
-		overlap_shoulder_indices = PackedInt32Array()
-		overlap_sidewalk_indices = PackedInt32Array()
-	var road_tris := _build_road_tri_xz_cache(
-		verts,
-		lane_indices,
-		overlap_shoulder_indices,
-		overlap_sidewalk_indices,
-		[]
-	)
-
-	if road_loops.is_empty() or boundary_points.is_empty():
+	if not _terrain_influence_loops.is_empty():
+		for loop in _terrain_influence_loops:
+			road_loops.push_back(loop)
+		boundary_source += "+influence"
+	if boundary_points.is_empty():
 		return
+	if road_loops.is_empty() and _terrain_influence_strips.is_empty():
+		return
+	if road_loops.is_empty():
+		boundary_source = "influence-only"
 	_debug_log(
-		"boolean fill boundary source=%s loops=%s clip_mode=%s solver=%s"
+		"boolean fill boundary source=%s loops=%s clip_mode=%s"
 		% [
 			boundary_source,
 			road_loops.size(),
-			"lane-only" if terrain_boolean_clip_width_mode == TERRAIN_BOOLEAN_CLIP_LANE_ONLY else "outer",
-			"fill" if terrain_boolean_solver_mode == TERRAIN_BOOLEAN_SOLVER_FILL else "boolean"
+			"outer"
 		]
 	)
-
-	var min_x := INF
-	var max_x := -INF
-	var min_z := INF
-	var max_z := -INF
-	for p_raw in boundary_points:
-		var p: Vector3 = p_raw
-		min_x = minf(min_x, p.x)
-		max_x = maxf(max_x, p.x)
-		min_z = minf(min_z, p.z)
-		max_z = maxf(max_z, p.z)
-	if min_x >= max_x or min_z >= max_z:
-		return
-
-	var padding := maxf(0.0, terrain_boolean_padding)
-	var outer := PackedVector2Array([
-		Vector2(min_x - padding, min_z - padding),
-		Vector2(max_x + padding, min_z - padding),
-		Vector2(max_x + padding, max_z + padding),
-		Vector2(min_x - padding, max_z + padding),
-	])
-	if Geometry2D.is_polygon_clockwise(outer):
-		outer.reverse()
 
 	var road_parts: Array = []
 	for loop_raw in road_loops:
@@ -1864,7 +1866,9 @@ func _append_terrain_from_boolean_fill(
 			continue
 		road_parts.push_back(loop)
 
-	var fill_parts: Array = [outer]
+	var fill_parts := _build_outer_rect_fill_parts_from_road_parts(road_parts, boundary_points)
+	if fill_parts.is_empty():
+		return
 	for part_raw in road_parts:
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
@@ -1877,7 +1881,7 @@ func _append_terrain_from_boolean_fill(
 		% [fill_parts.size(), _polygon_parts_total_area_abs_xz(fill_parts), road_parts.size()]
 	)
 
-	var snap_eps := maxf(0.0001, terrain_boolean_height_match_epsilon)
+	var snap_eps := maxf(0.0001, terrain_fill_height_match_epsilon)
 	var boundary_height_map: Dictionary = {}
 	for p_raw in boundary_points:
 		var p: Vector3 = p_raw
@@ -1887,21 +1891,25 @@ func _append_terrain_from_boolean_fill(
 		sum_and_count[1] = int(sum_and_count[1]) + 1
 		boundary_height_map[key] = sum_and_count
 
-	var base_y := terrain_boolean_base_height + y_offset
-	var max_leaf_edge_len := maxf(1.0, road_width * 0.35)
-	var split_depth_max := 7
+	var heightmap_image := _build_fill_heightmap_image()
+	var base_y := terrain_fill_base_height + y_offset
+	var base_edge_len := maxf(1.0, road_width * 0.35)
+	var tri_limit := TERRAIN_RECT_FILL_MAX_TRIANGLES
 	var tri_stats := {
 		"tri_candidates": 0,
-		"tri_rejected_overlap": 0,
 		"tri_kept": 0,
 	}
+	var edge_midpoint_height_cache: Dictionary = {}
+	var limit_reached := false
 	for poly_raw in fill_parts:
+		if limit_reached:
+			break
 		var poly: PackedVector2Array = _compact_polygon2d_xz(poly_raw, 0.001)
 		if poly.size() < 3:
 			continue
 		var dense_poly := _resample_polygon_edges_for_boolean_fill(
 			poly,
-			maxf(1.0, road_width * 0.35)
+			base_edge_len
 		)
 		if dense_poly.size() >= 3:
 			poly = dense_poly
@@ -1909,6 +1917,7 @@ func _append_terrain_from_boolean_fill(
 		if tri_local.size() < 3:
 			continue
 
+		var root_tris: Array = []
 		var tri_count := tri_local.size() - (tri_local.size() % 3)
 		for i in range(0, tri_count, 3):
 			var local_a := int(tri_local[i])
@@ -1921,267 +1930,79 @@ func _append_terrain_from_boolean_fill(
 			var pa2: Vector2 = poly[local_a]
 			var pb2: Vector2 = poly[local_b]
 			var pc2: Vector2 = poly[local_c]
-			if terrain_boolean_solver_mode == TERRAIN_BOOLEAN_SOLVER_FILL:
-				tri_stats["tri_candidates"] = int(tri_stats.get("tri_candidates", 0)) + 1
-				var y_a := _sample_boolean_fill_vertex_height(pa2, boundary_height_map, boundary_points, base_y)
-				var y_b := _sample_boolean_fill_vertex_height(pb2, boundary_height_map, boundary_points, base_y)
-				var y_c := _sample_boolean_fill_vertex_height(pc2, boundary_height_map, boundary_points, base_y)
-				var p_a := Vector3(pa2.x, y_a, pa2.y)
-				var p_b := Vector3(pb2.x, y_b, pb2.y)
-				var p_c := Vector3(pc2.x, y_c, pc2.y)
-				var i_a := verts.size()
-				verts.push_back(p_a)
-				normals.push_back(Vector3.UP)
-				uvs.push_back(Vector2(p_a.x, p_a.z) * uv_length_scale)
-				var i_b := verts.size()
-				verts.push_back(p_b)
-				normals.push_back(Vector3.UP)
-				uvs.push_back(Vector2(p_b.x, p_b.z) * uv_length_scale)
-				var i_c := verts.size()
-				verts.push_back(p_c)
-				normals.push_back(Vector3.UP)
-				uvs.push_back(Vector2(p_c.x, p_c.z) * uv_length_scale)
-				tri_stats["tri_kept"] = int(tri_stats.get("tri_kept", 0)) + 1
-				if invert_faces:
-					terrain_indices.push_back(i_a)
-					terrain_indices.push_back(i_b)
-					terrain_indices.push_back(i_c)
-				else:
-					terrain_indices.push_back(i_a)
-					terrain_indices.push_back(i_c)
-					terrain_indices.push_back(i_b)
-			else:
-				_append_boolean_fill_triangle_bisect(
-					pa2,
-					pb2,
-					pc2,
-					verts,
-					normals,
-					uvs,
-					terrain_indices,
-					road_tris,
+			root_tris.push_back(PackedVector2Array([pa2, pb2, pc2]))
+
+		if root_tris.is_empty():
+			continue
+		var max_conform_iters := 1
+		for _iter in range(max_conform_iters):
+			var changed := false
+			for tri_raw in root_tris:
+				var tri: PackedVector2Array = tri_raw
+				if tri.size() < 3:
+					continue
+				if _precompute_fill_split_edges(
+					tri[0],
+					tri[1],
+					tri[2],
 					boundary_height_map,
 					boundary_points,
 					base_y,
-					max_leaf_edge_len,
-					split_depth_max,
-					0,
-					tri_stats
-				)
+					road_parts,
+					heightmap_image,
+					base_edge_len,
+					edge_midpoint_height_cache,
+					0
+				):
+					changed = true
+			if not changed:
+				break
+
+		for tri_raw in root_tris:
+			if int(tri_stats.get("tri_kept", 0)) >= tri_limit:
+				limit_reached = true
+				break
+			var tri: PackedVector2Array = tri_raw
+			if tri.size() < 3:
+				continue
+			var pa2: Vector2 = tri[0]
+			var pb2: Vector2 = tri[1]
+			var pc2: Vector2 = tri[2]
+			var y_a := _sample_fill_vertex_height(pa2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			var y_b := _sample_fill_vertex_height(pb2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			var y_c := _sample_fill_vertex_height(pc2, boundary_height_map, boundary_points, base_y, heightmap_image)
+			_append_fill_triangle_adaptive(
+				pa2,
+				pb2,
+				pc2,
+				verts,
+				normals,
+				uvs,
+				terrain_indices,
+				boundary_height_map,
+				boundary_points,
+				base_y,
+				road_parts,
+				heightmap_image,
+				y_a,
+				y_b,
+				y_c,
+				base_edge_len,
+				tri_limit,
+				tri_stats,
+				edge_midpoint_height_cache,
+				0
+			)
+			if int(tri_stats.get("tri_kept", 0)) >= tri_limit:
+				limit_reached = true
+				break
 	_debug_log(
-		"boolean fill tris candidates=%s kept=%s rejected_overlap=%s"
+		"boolean fill tris candidates=%s kept=%s"
 		% [
 			int(tri_stats.get("tri_candidates", 0)),
-			int(tri_stats.get("tri_kept", 0)),
-			int(tri_stats.get("tri_rejected_overlap", 0))
+			int(tri_stats.get("tri_kept", 0))
 		]
 	)
-
-
-func _append_boolean_fill_triangle_bisect(
-	a: Vector2,
-	b: Vector2,
-	c: Vector2,
-	verts: PackedVector3Array,
-	normals: PackedVector3Array,
-	uvs: PackedVector2Array,
-	terrain_indices: PackedInt32Array,
-	road_tris: Array,
-	boundary_height_map: Dictionary,
-	boundary_points: Array,
-	base_y: float,
-	max_edge_len: float,
-	max_depth: int,
-	depth: int,
-	tri_stats: Dictionary
-) -> void:
-	var ab := a.distance_to(b)
-	var bc := b.distance_to(c)
-	var ca := c.distance_to(a)
-	var longest := maxf(ab, maxf(bc, ca))
-	if depth < max_depth and longest > max_edge_len:
-		if ab >= bc and ab >= ca:
-			var m_ab := (a + b) * 0.5
-			_append_boolean_fill_triangle_bisect(
-				a,
-				m_ab,
-				c,
-				verts,
-				normals,
-				uvs,
-				terrain_indices,
-				road_tris,
-				boundary_height_map,
-				boundary_points,
-				base_y,
-				max_edge_len,
-				max_depth,
-				depth + 1,
-				tri_stats
-			)
-			_append_boolean_fill_triangle_bisect(
-				m_ab,
-				b,
-				c,
-				verts,
-				normals,
-				uvs,
-				terrain_indices,
-				road_tris,
-				boundary_height_map,
-				boundary_points,
-				base_y,
-				max_edge_len,
-				max_depth,
-				depth + 1,
-				tri_stats
-			)
-			return
-		if bc >= ca:
-			var m_bc := (b + c) * 0.5
-			_append_boolean_fill_triangle_bisect(
-				b,
-				m_bc,
-				a,
-				verts,
-				normals,
-				uvs,
-				terrain_indices,
-				road_tris,
-				boundary_height_map,
-				boundary_points,
-				base_y,
-				max_edge_len,
-				max_depth,
-				depth + 1,
-				tri_stats
-			)
-			_append_boolean_fill_triangle_bisect(
-				m_bc,
-				c,
-				a,
-				verts,
-				normals,
-				uvs,
-				terrain_indices,
-				road_tris,
-				boundary_height_map,
-				boundary_points,
-				base_y,
-				max_edge_len,
-				max_depth,
-				depth + 1,
-				tri_stats
-			)
-			return
-		var m_ca := (c + a) * 0.5
-		_append_boolean_fill_triangle_bisect(
-			c,
-			m_ca,
-			b,
-			verts,
-			normals,
-			uvs,
-			terrain_indices,
-			road_tris,
-			boundary_height_map,
-			boundary_points,
-			base_y,
-			max_edge_len,
-			max_depth,
-			depth + 1,
-			tri_stats
-		)
-		_append_boolean_fill_triangle_bisect(
-			m_ca,
-			a,
-			b,
-			verts,
-			normals,
-			uvs,
-			terrain_indices,
-			road_tris,
-			boundary_height_map,
-			boundary_points,
-			base_y,
-			max_edge_len,
-			max_depth,
-			depth + 1,
-			tri_stats
-		)
-		return
-
-	tri_stats["tri_candidates"] = int(tri_stats.get("tri_candidates", 0)) + 1
-	if _boolean_fill_triangle_overlaps_road_xz(a, b, c, road_tris):
-		tri_stats["tri_rejected_overlap"] = int(tri_stats.get("tri_rejected_overlap", 0)) + 1
-		return
-
-	var y_a := _sample_boolean_fill_vertex_height(a, boundary_height_map, boundary_points, base_y)
-	var y_b := _sample_boolean_fill_vertex_height(b, boundary_height_map, boundary_points, base_y)
-	var y_c := _sample_boolean_fill_vertex_height(c, boundary_height_map, boundary_points, base_y)
-	var p_a := Vector3(a.x, y_a, a.y)
-	var p_b := Vector3(b.x, y_b, b.y)
-	var p_c := Vector3(c.x, y_c, c.y)
-
-	var i_a := verts.size()
-	verts.push_back(p_a)
-	normals.push_back(Vector3.UP)
-	uvs.push_back(Vector2(p_a.x, p_a.z) * uv_length_scale)
-	var i_b := verts.size()
-	verts.push_back(p_b)
-	normals.push_back(Vector3.UP)
-	uvs.push_back(Vector2(p_b.x, p_b.z) * uv_length_scale)
-	var i_c := verts.size()
-	verts.push_back(p_c)
-	normals.push_back(Vector3.UP)
-	uvs.push_back(Vector2(p_c.x, p_c.z) * uv_length_scale)
-
-	tri_stats["tri_kept"] = int(tri_stats.get("tri_kept", 0)) + 1
-	if invert_faces:
-		terrain_indices.push_back(i_a)
-		terrain_indices.push_back(i_b)
-		terrain_indices.push_back(i_c)
-	else:
-		terrain_indices.push_back(i_a)
-		terrain_indices.push_back(i_c)
-		terrain_indices.push_back(i_b)
-
-
-func _boolean_fill_triangle_overlaps_road_xz(
-	a: Vector2,
-	b: Vector2,
-	c: Vector2,
-	road_tris: Array
-) -> bool:
-	if road_tris.is_empty():
-		return false
-	var centroid := (a + b + c) / 3.0
-	# Clipping already subtracts road polygons. Here we only guard against
-	# residual triangles fully inside road area; border-touching triangles are kept.
-	var eps := 0.0001
-	if not _point_over_any_road_triangle_xz(centroid, road_tris, eps):
-		return false
-	var inside_vertices := 0
-	if _point_over_any_road_triangle_xz(a, road_tris, eps):
-		inside_vertices += 1
-	if _point_over_any_road_triangle_xz(b, road_tris, eps):
-		inside_vertices += 1
-	if _point_over_any_road_triangle_xz(c, road_tris, eps):
-		inside_vertices += 1
-	if inside_vertices >= 2:
-		return true
-	var mid_ab := (a + b) * 0.5
-	var mid_bc := (b + c) * 0.5
-	var mid_ca := (c + a) * 0.5
-	var inside_midpoints := 0
-	if _point_over_any_road_triangle_xz(mid_ab, road_tris, eps):
-		inside_midpoints += 1
-	if _point_over_any_road_triangle_xz(mid_bc, road_tris, eps):
-		inside_midpoints += 1
-	if _point_over_any_road_triangle_xz(mid_ca, road_tris, eps):
-		inside_midpoints += 1
-	return inside_midpoints >= 2
-
 
 func _extract_road_boundary_loops_xz(
 	verts: PackedVector3Array,
@@ -2274,7 +2095,7 @@ func _build_path_row_boundary_polygons_xz(verts: PackedVector3Array, path_rows: 
 	return _build_path_row_boundary_polygons_xz_mode(
 		verts,
 		path_rows,
-		terrain_boolean_clip_width_mode == TERRAIN_BOOLEAN_CLIP_LANE_ONLY
+		false
 	)
 
 
@@ -2395,35 +2216,6 @@ func _resample_polygon_edges_for_boolean_fill(poly: PackedVector2Array, max_edge
 	return _compact_polygon2d_xz(out, 0.0005)
 
 
-func _union_polygon_parts_for_fill(parts: Array, poly: PackedVector2Array) -> Array:
-	var out: Array = []
-	for p_raw in parts:
-		var p: PackedVector2Array = p_raw
-		if p.size() >= 3:
-			out.push_back(p)
-	out.push_back(poly)
-
-	var merged := true
-	while merged:
-		merged = false
-		for i in range(out.size()):
-			var a: PackedVector2Array = out[i]
-			for j in range(i + 1, out.size()):
-				var b: PackedVector2Array = out[j]
-				var candidate: Array = Geometry2D.merge_polygons(a, b)
-				if candidate.size() == 1:
-					var only: PackedVector2Array = _compact_polygon2d_xz(candidate[0], 0.001)
-					if only.size() < 3:
-						continue
-					out[i] = only
-					out.remove_at(j)
-					merged = true
-					break
-			if merged:
-				break
-	return out
-
-
 func _clip_fill_parts_by_polygon(fill_parts: Array, clip_poly: PackedVector2Array) -> Array:
 	var out: Array = []
 	var clip := _compact_polygon2d_xz(clip_poly, 0.001)
@@ -2442,18 +2234,26 @@ func _clip_fill_parts_by_polygon(fill_parts: Array, clip_poly: PackedVector2Arra
 			continue
 
 		# clip_polygons(A, B) computes A - B.
-		var clipped := Geometry2D.clip_polygons(part, clip)
+		var clipped: Array = Geometry2D.clip_polygons(part, clip)
+		if not clipped.is_empty():
+			clipped = _filter_parts_outside_clip(clipped, clip, clip_rev)
 		if clipped.is_empty():
 			# Winding mismatch can make clip_polygons return empty on valid inputs.
 			var part_rev := part
 			part_rev.reverse()
 			clipped = Geometry2D.clip_polygons(part_rev, clip)
+			if not clipped.is_empty():
+				clipped = _filter_parts_outside_clip(clipped, clip, clip_rev)
 		if clipped.is_empty():
 			clipped = Geometry2D.clip_polygons(part, clip_rev)
+			if not clipped.is_empty():
+				clipped = _filter_parts_outside_clip(clipped, clip, clip_rev)
 		if clipped.is_empty():
 			var part_rev2 := part
 			part_rev2.reverse()
 			clipped = Geometry2D.clip_polygons(part_rev2, clip_rev)
+			if not clipped.is_empty():
+				clipped = _filter_parts_outside_clip(clipped, clip, clip_rev)
 		
 		# If clipping failed or produced no results, check if the part is completely inside or outside.
 		if clipped.is_empty():
@@ -2471,6 +2271,199 @@ func _clip_fill_parts_by_polygon(fill_parts: Array, clip_poly: PackedVector2Arra
 			if piece.size() >= 3:
 				out.push_back(piece)
 	return out
+
+
+func _build_outer_rect_fill_parts_from_boundary_points(boundary_points: Array) -> Array:
+	var min_x := INF
+	var max_x := -INF
+	var min_z := INF
+	var max_z := -INF
+	for p_raw in boundary_points:
+		var p: Vector3 = p_raw
+		min_x = minf(min_x, p.x)
+		max_x = maxf(max_x, p.x)
+		min_z = minf(min_z, p.z)
+		max_z = maxf(max_z, p.z)
+	if min_x >= max_x or min_z >= max_z:
+		return []
+
+	var outer := PackedVector2Array([
+		Vector2(min_x, min_z),
+		Vector2(max_x, min_z),
+		Vector2(max_x, max_z),
+		Vector2(min_x, max_z),
+	])
+	if Geometry2D.is_polygon_clockwise(outer):
+		outer.reverse()
+	return [outer]
+
+
+func _append_terrain_influence_boundary_points(boundary_points: Array) -> void:
+	if _terrain_influence_strips.is_empty():
+		return
+	for strip_raw in _terrain_influence_strips:
+		var strip: Dictionary = strip_raw
+		var boundary: PackedVector3Array = strip.get("boundary_points", PackedVector3Array())
+		for p in boundary:
+			boundary_points.push_back(p)
+
+
+func _collect_terrain_influence_seed_boxes() -> Array:
+	var boxes: Array = []
+	for strip_raw in _terrain_influence_strips:
+		var strip: Dictionary = strip_raw
+		var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+		if points.size() < 2:
+			continue
+		var min_x := INF
+		var max_x := -INF
+		var min_z := INF
+		var max_z := -INF
+		for p in points:
+			min_x = minf(min_x, p.x)
+			max_x = maxf(max_x, p.x)
+			min_z = minf(min_z, p.z)
+			max_z = maxf(max_z, p.z)
+		var edge := maxf(0.0, float(strip.get("half_width", 0.0)) + float(strip.get("blend", 0.0)))
+		min_x -= edge
+		max_x += edge
+		min_z -= edge
+		max_z += edge
+		if min_x >= max_x or min_z >= max_z:
+			continue
+		boxes.push_back({
+			"min_x": min_x,
+			"max_x": max_x,
+			"min_z": min_z,
+			"max_z": max_z,
+		})
+	return boxes
+
+
+func _build_outer_rect_fill_parts_from_road_parts(road_parts: Array, boundary_points: Array) -> Array:
+	var boxes: Array = []
+	for part_raw in road_parts:
+		var part: PackedVector2Array = _compact_polygon2d_xz(part_raw, 0.001)
+		if part.size() < 3:
+			continue
+		var box := _polygon_bbox_xz(part)
+		if box.is_empty():
+			continue
+		boxes.push_back(box)
+	for box in _collect_terrain_influence_seed_boxes():
+		boxes.push_back(box)
+
+	if boxes.is_empty():
+		return _build_outer_rect_fill_parts_from_boundary_points(boundary_points)
+
+	var parent: Array = []
+	parent.resize(boxes.size())
+	for i in range(parent.size()):
+		parent[i] = i
+
+	var merge_gap := maxf(0.001, road_width * 0.5)
+	for i in range(boxes.size()):
+		for j in range(i + 1, boxes.size()):
+			if _bbox_overlaps_or_touches(boxes[i], boxes[j], merge_gap):
+				_union_find_union(parent, i, j)
+
+	var cluster_bbox: Dictionary = {}
+	for i in range(boxes.size()):
+		var root := _union_find_find(parent, i)
+		var box: Dictionary = boxes[i]
+		if not cluster_bbox.has(root):
+			cluster_bbox[root] = box.duplicate(true)
+			continue
+		var acc: Dictionary = cluster_bbox[root]
+		acc["min_x"] = minf(float(acc.get("min_x", INF)), float(box.get("min_x", INF)))
+		acc["max_x"] = maxf(float(acc.get("max_x", -INF)), float(box.get("max_x", -INF)))
+		acc["min_z"] = minf(float(acc.get("min_z", INF)), float(box.get("min_z", INF)))
+		acc["max_z"] = maxf(float(acc.get("max_z", -INF)), float(box.get("max_z", -INF)))
+		cluster_bbox[root] = acc
+
+	var out: Array = []
+	for root in cluster_bbox.keys():
+		var box: Dictionary = cluster_bbox[root]
+		var min_x := float(box.get("min_x", INF))
+		var max_x := float(box.get("max_x", -INF))
+		var min_z := float(box.get("min_z", INF))
+		var max_z := float(box.get("max_z", -INF))
+		if min_x >= max_x or min_z >= max_z:
+			continue
+		var outer := PackedVector2Array([
+			Vector2(min_x, min_z),
+			Vector2(max_x, min_z),
+			Vector2(max_x, max_z),
+			Vector2(min_x, max_z),
+		])
+		if Geometry2D.is_polygon_clockwise(outer):
+			outer.reverse()
+		out.push_back(outer)
+
+	if out.is_empty():
+		return _build_outer_rect_fill_parts_from_boundary_points(boundary_points)
+	return out
+
+
+func _polygon_bbox_xz(poly: PackedVector2Array) -> Dictionary:
+	if poly.size() < 3:
+		return {}
+	var min_x := INF
+	var max_x := -INF
+	var min_z := INF
+	var max_z := -INF
+	for p in poly:
+		min_x = minf(min_x, p.x)
+		max_x = maxf(max_x, p.x)
+		min_z = minf(min_z, p.y)
+		max_z = maxf(max_z, p.y)
+	if min_x >= max_x or min_z >= max_z:
+		return {}
+	return {
+		"min_x": min_x,
+		"max_x": max_x,
+		"min_z": min_z,
+		"max_z": max_z,
+	}
+
+
+func _bbox_overlaps_or_touches(a: Dictionary, b: Dictionary, gap: float) -> bool:
+	var min_ax := float(a.get("min_x", INF)) - gap
+	var max_ax := float(a.get("max_x", -INF)) + gap
+	var min_az := float(a.get("min_z", INF)) - gap
+	var max_az := float(a.get("max_z", -INF)) + gap
+	var min_bx := float(b.get("min_x", INF))
+	var max_bx := float(b.get("max_x", -INF))
+	var min_bz := float(b.get("min_z", INF))
+	var max_bz := float(b.get("max_z", -INF))
+	if min_ax > max_bx or max_ax < min_bx:
+		return false
+	if min_az > max_bz or max_az < min_bz:
+		return false
+	return true
+
+
+func _union_find_find(parent: Array, i: int) -> int:
+	var root := i
+	while parent[root] != root:
+		root = parent[root]
+	var current := i
+	while parent[current] != current:
+		var next = parent[current]
+		parent[current] = root
+		current = next
+	return root
+
+
+func _union_find_union(parent: Array, a: int, b: int) -> void:
+	var ra := _union_find_find(parent, a)
+	var rb := _union_find_find(parent, b)
+	if ra == rb:
+		return
+	if ra < rb:
+		parent[rb] = ra
+	else:
+		parent[ra] = rb
 
 
 func _filter_parts_outside_clip(
@@ -2505,15 +2498,6 @@ func _polygon_probe_point(poly: PackedVector2Array) -> Vector2:
 	for p in poly:
 		sum += p
 	return sum / float(poly.size())
-
-
-func _compact_polygons_array_xz(parts: Array) -> Array:
-	var out: Array = []
-	for raw in parts:
-		var poly: PackedVector2Array = _compact_polygon2d_xz(raw, 0.001)
-		if poly.size() >= 3:
-			out.push_back(poly)
-	return out
 
 
 func _polygon_parts_total_area_abs_xz(parts: Array) -> float:
@@ -2555,14 +2539,14 @@ func _sample_boolean_fill_vertex_height(
 	boundary_points: Array,
 	default_y: float
 ) -> float:
-	var eps := maxf(0.0001, terrain_boolean_height_match_epsilon)
+	var eps := maxf(0.0001, terrain_fill_height_match_epsilon)
 	var key := Vector2i(int(round(point.x / eps)), int(round(point.y / eps)))
 	if boundary_height_map.has(key):
 		var sum_and_count: Array = boundary_height_map.get(key, [default_y, 1])
 		var count := maxi(1, int(sum_and_count[1]))
 		return float(sum_and_count[0]) / float(count)
 
-	var max_dist := maxf(0.0, terrain_boolean_height_match_max_distance)
+	var max_dist := maxf(0.0, terrain_fill_height_match_max_distance)
 	if max_dist <= 0.0001:
 		return default_y
 
@@ -2575,6 +2559,397 @@ func _sample_boolean_fill_vertex_height(
 			best_dist = d
 			best_y = p.y
 	return best_y
+
+
+func _build_fill_heightmap_image() -> Image:
+	return null
+
+
+func _sample_fill_vertex_height(
+	point: Vector2,
+	boundary_height_map: Dictionary,
+	boundary_points: Array,
+	base_y: float,
+	heightmap_image: Image
+) -> float:
+	return _sample_boolean_fill_vertex_height(point, boundary_height_map, boundary_points, base_y)
+
+
+func _min_distance_to_road_loops_xz(point: Vector2, road_loops: Array) -> float:
+	var best := INF
+	for raw in road_loops:
+		var loop: PackedVector2Array = raw
+		if loop.size() < 2:
+			continue
+		for i in range(loop.size()):
+			var a: Vector2 = loop[i]
+			var b: Vector2 = loop[(i + 1) % loop.size()]
+			var d := _distance_point_to_segment_2d(point, a, b)
+			if d < best:
+				best = d
+	return best
+
+
+func _fill_edge_height_cache_key(a: Vector2, b: Vector2) -> String:
+	var scale := 100000.0
+	var ax := int(round(a.x * scale))
+	var ay := int(round(a.y * scale))
+	var bx := int(round(b.x * scale))
+	var by := int(round(b.y * scale))
+	if ax > bx or (ax == bx and ay > by):
+		var tx := ax
+		var ty := ay
+		ax = bx
+		ay = by
+		bx = tx
+		by = ty
+	return "%s,%s|%s,%s" % [ax, ay, bx, by]
+
+
+func _get_fill_edge_midpoint_height(
+	a: Vector2,
+	b: Vector2,
+	boundary_height_map: Dictionary,
+	boundary_points: Array,
+	base_y: float,
+	heightmap_image: Image,
+	edge_midpoint_height_cache: Dictionary
+) -> float:
+	var key := _fill_edge_height_cache_key(a, b)
+	if edge_midpoint_height_cache.has(key):
+		return float(edge_midpoint_height_cache[key])
+	var midpoint := (a + b) * 0.5
+	var y_mid := _sample_fill_vertex_height(
+		midpoint,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		heightmap_image
+	)
+	edge_midpoint_height_cache[key] = y_mid
+	return y_mid
+
+
+func _fill_triangle_has_split_edge(
+	a: Vector2,
+	b: Vector2,
+	c: Vector2,
+	edge_midpoint_height_cache: Dictionary
+) -> bool:
+	return (
+		edge_midpoint_height_cache.has(_fill_edge_height_cache_key(a, b))
+		or edge_midpoint_height_cache.has(_fill_edge_height_cache_key(b, c))
+		or edge_midpoint_height_cache.has(_fill_edge_height_cache_key(c, a))
+	)
+
+
+func _precompute_fill_split_edges(
+	a: Vector2,
+	b: Vector2,
+	c: Vector2,
+	boundary_height_map: Dictionary,
+	boundary_points: Array,
+	base_y: float,
+	road_loops: Array,
+	heightmap_image: Image,
+	base_edge_len: float,
+	edge_midpoint_height_cache: Dictionary,
+	depth: int
+) -> bool:
+	var max_depth := 0
+	if depth >= max_depth:
+		return false
+	var forced_by_neighbor := _fill_triangle_has_split_edge(a, b, c, edge_midpoint_height_cache)
+	var split_by_metric := _should_subdivide_fill_triangle(
+		a,
+		b,
+		c,
+		road_loops,
+		heightmap_image,
+		base_edge_len,
+		depth
+	)
+	if not forced_by_neighbor and not split_by_metric:
+		return false
+
+	var changed := false
+	var before := edge_midpoint_height_cache.size()
+	var m_ab := (a + b) * 0.5
+	var m_bc := (b + c) * 0.5
+	var m_ca := (c + a) * 0.5
+	_get_fill_edge_midpoint_height(
+		a,
+		b,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		heightmap_image,
+		edge_midpoint_height_cache
+	)
+	_get_fill_edge_midpoint_height(
+		b,
+		c,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		heightmap_image,
+		edge_midpoint_height_cache
+	)
+	_get_fill_edge_midpoint_height(
+		c,
+		a,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		heightmap_image,
+		edge_midpoint_height_cache
+	)
+	if edge_midpoint_height_cache.size() != before:
+		changed = true
+
+	if _precompute_fill_split_edges(
+		a,
+		m_ab,
+		m_ca,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		road_loops,
+		heightmap_image,
+		base_edge_len,
+		edge_midpoint_height_cache,
+		depth + 1
+	):
+		changed = true
+	if _precompute_fill_split_edges(
+		m_ab,
+		b,
+		m_bc,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		road_loops,
+		heightmap_image,
+		base_edge_len,
+		edge_midpoint_height_cache,
+		depth + 1
+	):
+		changed = true
+	if _precompute_fill_split_edges(
+		m_ca,
+		m_bc,
+		c,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		road_loops,
+		heightmap_image,
+		base_edge_len,
+		edge_midpoint_height_cache,
+		depth + 1
+	):
+		changed = true
+	if _precompute_fill_split_edges(
+		m_ab,
+		m_bc,
+		m_ca,
+		boundary_height_map,
+		boundary_points,
+		base_y,
+		road_loops,
+		heightmap_image,
+		base_edge_len,
+		edge_midpoint_height_cache,
+		depth + 1
+	):
+		changed = true
+	return changed
+
+
+func _should_subdivide_fill_triangle(
+	a: Vector2,
+	b: Vector2,
+	c: Vector2,
+	road_loops: Array,
+	heightmap_image: Image,
+	base_edge_len: float,
+	depth: int
+) -> bool:
+	return false
+
+
+func _append_fill_triangle_adaptive(
+	a: Vector2,
+	b: Vector2,
+	c: Vector2,
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	terrain_indices: PackedInt32Array,
+	boundary_height_map: Dictionary,
+	boundary_points: Array,
+	base_y: float,
+	road_loops: Array,
+	heightmap_image: Image,
+	y_a: float,
+	y_b: float,
+	y_c: float,
+	base_edge_len: float,
+	tri_limit: int,
+	tri_stats: Dictionary,
+	edge_midpoint_height_cache: Dictionary,
+	depth: int
+) -> void:
+	if tri_limit > 0 and int(tri_stats.get("tri_kept", 0)) >= tri_limit:
+		return
+	tri_stats["tri_candidates"] = int(tri_stats.get("tri_candidates", 0)) + 1
+	var max_depth := 0
+	if depth < max_depth and _fill_triangle_has_split_edge(a, b, c, edge_midpoint_height_cache):
+		# Regular 1->4 split keeps triangulation shape stable and avoids fan-like blades.
+		var m_ab := (a + b) * 0.5
+		var m_bc := (b + c) * 0.5
+		var m_ca := (c + a) * 0.5
+		var y_m_ab := _get_fill_edge_midpoint_height(
+			a,
+			b,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			heightmap_image,
+			edge_midpoint_height_cache
+		)
+		var y_m_bc := _get_fill_edge_midpoint_height(
+			b,
+			c,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			heightmap_image,
+			edge_midpoint_height_cache
+		)
+		var y_m_ca := _get_fill_edge_midpoint_height(
+			c,
+			a,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			heightmap_image,
+			edge_midpoint_height_cache
+		)
+		_append_fill_triangle_adaptive(
+			a,
+			m_ab,
+			m_ca,
+			verts,
+			normals,
+			uvs,
+			terrain_indices,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			road_loops,
+			heightmap_image,
+			y_a,
+			y_m_ab,
+			y_m_ca,
+			base_edge_len,
+			tri_limit,
+			tri_stats,
+			edge_midpoint_height_cache,
+			depth + 1
+		)
+		_append_fill_triangle_adaptive(
+			m_ab,
+			b,
+			m_bc,
+			verts,
+			normals,
+			uvs,
+			terrain_indices,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			road_loops,
+			heightmap_image,
+			y_m_ab,
+			y_b,
+			y_m_bc,
+			base_edge_len,
+			tri_limit,
+			tri_stats,
+			edge_midpoint_height_cache,
+			depth + 1
+		)
+		_append_fill_triangle_adaptive(
+			m_ca,
+			m_bc,
+			c,
+			verts,
+			normals,
+			uvs,
+			terrain_indices,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			road_loops,
+			heightmap_image,
+			y_m_ca,
+			y_m_bc,
+			y_c,
+			base_edge_len,
+			tri_limit,
+			tri_stats,
+			edge_midpoint_height_cache,
+			depth + 1
+		)
+		_append_fill_triangle_adaptive(
+			m_ab,
+			m_bc,
+			m_ca,
+			verts,
+			normals,
+			uvs,
+			terrain_indices,
+			boundary_height_map,
+			boundary_points,
+			base_y,
+			road_loops,
+			heightmap_image,
+			y_m_ab,
+			y_m_bc,
+			y_m_ca,
+			base_edge_len,
+			tri_limit,
+			tri_stats,
+			edge_midpoint_height_cache,
+			depth + 1
+		)
+		return
+
+	var p_a := Vector3(a.x, y_a, a.y)
+	var p_b := Vector3(b.x, y_b, b.y)
+	var p_c := Vector3(c.x, y_c, c.y)
+	var i_a := verts.size()
+	verts.push_back(p_a)
+	normals.push_back(Vector3.UP)
+	uvs.push_back(Vector2(p_a.x, p_a.z) * uv_length_scale)
+	var i_b := verts.size()
+	verts.push_back(p_b)
+	normals.push_back(Vector3.UP)
+	uvs.push_back(Vector2(p_b.x, p_b.z) * uv_length_scale)
+	var i_c := verts.size()
+	verts.push_back(p_c)
+	normals.push_back(Vector3.UP)
+	uvs.push_back(Vector2(p_c.x, p_c.z) * uv_length_scale)
+	tri_stats["tri_kept"] = int(tri_stats.get("tri_kept", 0)) + 1
+	if invert_faces:
+		terrain_indices.push_back(i_a)
+		terrain_indices.push_back(i_b)
+		terrain_indices.push_back(i_c)
+	else:
+		terrain_indices.push_back(i_a)
+		terrain_indices.push_back(i_c)
+		terrain_indices.push_back(i_b)
 
 
 func _append_terrain_from_path_rows(
@@ -3322,6 +3697,39 @@ func _sample_image_red_bilinear(image: Image, uv: Vector2) -> float:
 
 	var tx := fx - float(x0)
 	var ty := fy - float(y0)
+
+	var c00 := image.get_pixel(x0, y0).r
+	var c10 := image.get_pixel(x1, y0).r
+	var c01 := image.get_pixel(x0, y1).r
+	var c11 := image.get_pixel(x1, y1).r
+
+	var a := lerpf(c00, c10, tx)
+	var b := lerpf(c01, c11, tx)
+	return lerpf(a, b, ty)
+
+
+func _sample_image_red_bilinear_repeat(image: Image, uv: Vector2) -> float:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return 0.0
+	if width == 1 and height == 1:
+		return image.get_pixel(0, 0).r
+
+	var u: float = uv.x - floor(uv.x)
+	var v: float= uv.y - floor(uv.y)
+	var fx: float= u * float(width)
+	var fy: float= v * float(height)
+	var x0 := int(floor(fx)) % width
+	var y0 := int(floor(fy)) % height
+	if x0 < 0:
+		x0 += width
+	if y0 < 0:
+		y0 += height
+	var x1: float= (x0 + 1) % width
+	var y1: float= (y0 + 1) % height
+	var tx: float= fx - floor(fx)
+	var ty: float= fy - floor(fy)
 
 	var c00 := image.get_pixel(x0, y0).r
 	var c10 := image.get_pixel(x1, y0).r
@@ -4304,7 +4712,7 @@ func _collect_path_endpoints(paths: Array[Path3D], inv_global: Transform3D) -> A
 	for path_idx in range(paths.size()):
 		var points: Array[Vector3] = []
 		var path := paths[path_idx]
-		if path == null or path.curve == null or path.curve.point_count < 2:
+		if path == null or _path_is_terrain_influence_only(path) or path.curve == null or path.curve.point_count < 2:
 			out[path_idx] = points
 			continue
 
@@ -4694,6 +5102,539 @@ func _resolve_path_outer_wall_height(path: Path3D, dist: float, length: float) -
 	)
 
 
+func _path_is_terrain_influence_only(path: Path3D) -> bool:
+	if path == null:
+		return false
+	if path.has_method("is_terrain_influence_path"):
+		return bool(path.call("is_terrain_influence_path"))
+	return false
+
+
+func _build_terrain_influence_strip(
+	path: Path3D,
+	curve: Curve3D,
+	path_to_mesh: Transform3D,
+	distances: PackedFloat32Array
+) -> Dictionary:
+	if path == null or curve == null or distances.size() < 2:
+		return {}
+	var width := TERRAIN_INFLUENCE_DEFAULT_WIDTH
+	var blend := TERRAIN_INFLUENCE_DEFAULT_BLEND
+	var strength := TERRAIN_INFLUENCE_DEFAULT_STRENGTH
+	var band_count := 4
+	var profile_curve := 1.0
+	var profile_height := 0.0
+	if path.has_method("get_terrain_influence_width"):
+		width = maxf(0.2, float(path.call("get_terrain_influence_width")))
+	if path.has_method("get_terrain_influence_flatten_blend"):
+		blend = maxf(0.0, float(path.call("get_terrain_influence_flatten_blend")))
+	if path.has_method("get_terrain_influence_flatten_strength"):
+		strength = clampf(float(path.call("get_terrain_influence_flatten_strength")), 0.0, 1.0)
+	if path.has_method("get_terrain_influence_band_count"):
+		band_count = clampi(int(path.call("get_terrain_influence_band_count")), 1, 16)
+	if path.has_method("get_terrain_influence_profile_curve"):
+		profile_curve = maxf(0.2, float(path.call("get_terrain_influence_profile_curve")))
+	if path.has_method("get_terrain_influence_profile_height"):
+		profile_height = float(path.call("get_terrain_influence_profile_height"))
+	var half_width := width * 0.5
+	var points := PackedVector3Array()
+	points.resize(distances.size())
+	var rights := PackedVector3Array()
+	rights.resize(distances.size())
+	var outer_half := PackedFloat32Array()
+	outer_half.resize(distances.size())
+	for i in range(distances.size()):
+		var dist := distances[i]
+		var p_local := curve.sample_baked(dist, true)
+		var p_mesh := path_to_mesh * p_local
+		p_mesh.y += y_offset
+		points[i] = p_mesh
+
+		var prev_dist := maxf(0.0, dist - maxf(0.05, sample_step * 0.5))
+		var next_dist := minf(curve.get_baked_length(), dist + maxf(0.05, sample_step * 0.5))
+		var p_prev := path_to_mesh * curve.sample_baked(prev_dist, true)
+		var p_next := path_to_mesh * curve.sample_baked(next_dist, true)
+		var tangent := (p_next - p_prev).normalized()
+		if tangent.length_squared() <= 0.000000000001:
+			tangent = Vector3.FORWARD
+		var up_local := _sample_curve_up_vector(curve, dist)
+		var up_mesh := (path_to_mesh.basis * up_local).normalized()
+		if up_mesh.length_squared() <= 0.000000000001:
+			up_mesh = Vector3.UP
+		var right := up_mesh.cross(tangent).normalized()
+		if right.length_squared() <= 0.000000000001:
+			right = Vector3.UP.cross(tangent).normalized()
+		if right.length_squared() <= 0.000000000001:
+			right = Vector3.RIGHT
+
+		var prev_dir := (p_mesh - p_prev).normalized()
+		var next_dir := (p_next - p_mesh).normalized()
+		var corner_factor := 0.0
+		if prev_dir.length_squared() > 0.000000000001 and next_dir.length_squared() > 0.000000000001:
+			corner_factor = clampf((1.0 - prev_dir.dot(next_dir)) * 0.5, 0.0, 1.0)
+		rights[i] = right
+		outer_half[i] = half_width + blend * corner_factor
+
+	var band_left_edges: Array = []
+	var band_right_edges: Array = []
+	var band_loops_raw: Array = []
+	var band_loops: Array = []
+	for band_idx in range(band_count):
+		var band_t := float(band_idx + 1) / float(band_count)
+		var profile_t := _semicircle_profile_t(band_t, profile_curve)
+		var left_edge := PackedVector3Array()
+		var right_edge := PackedVector3Array()
+		left_edge.resize(points.size())
+		right_edge.resize(points.size())
+		for i in range(points.size()):
+			# Semicircle cross-profile from centerline to outside (half-tube feel).
+			var local_half := half_width + blend * profile_t + (outer_half[i] - half_width) * profile_t
+			left_edge[i] = points[i] - rights[i] * local_half
+			right_edge[i] = points[i] + rights[i] * local_half
+		var smooth_band := blend * band_t
+		left_edge = _smooth_open_edge_chain(left_edge, smooth_band)
+		right_edge = _smooth_open_edge_chain(right_edge, smooth_band)
+		var loop_raw := _build_capsule_loop_xz(points, left_edge, right_edge, band_count)
+		var loop := _compact_polygon2d_xz(loop_raw, 0.001)
+		if loop.size() >= 3 and Geometry2D.is_polygon_clockwise(loop):
+			loop.reverse()
+			loop_raw.reverse()
+		if loop.size() < 3 or loop_raw.size() < 3:
+			continue
+		band_left_edges.push_back(left_edge)
+		band_right_edges.push_back(right_edge)
+		band_loops_raw.push_back(loop_raw)
+		band_loops.push_back(loop)
+
+	var loop := PackedVector2Array()
+	if not band_loops.is_empty():
+		loop = band_loops[band_loops.size() - 1]
+	var boundary_points := PackedVector3Array()
+	for edge_raw in band_left_edges:
+		var edge: PackedVector3Array = edge_raw
+		for p in edge:
+			boundary_points.push_back(p)
+	for edge_raw in band_right_edges:
+		var edge: PackedVector3Array = edge_raw
+		for p in edge:
+			boundary_points.push_back(p)
+	return {
+		"points": points,
+		"rights": rights,
+		"band_count": band_count,
+		"band_left_edges": band_left_edges,
+		"band_right_edges": band_right_edges,
+		"band_loops_raw": band_loops_raw,
+		"band_loops": band_loops,
+		"loop": loop,
+		"outer_vertex_ids": {},
+		"boundary_points": boundary_points,
+		"half_width": half_width,
+		"blend": blend,
+		"strength": strength,
+		"profile_curve": profile_curve,
+		"profile_height": profile_height,
+	}
+
+
+func _build_capsule_loop_xz(
+	centers: PackedVector3Array,
+	left_edge: PackedVector3Array,
+	right_edge: PackedVector3Array,
+	band_count: int
+) -> PackedVector2Array:
+	var loop := PackedVector2Array()
+	if centers.size() < 2 or left_edge.size() != centers.size() or right_edge.size() != centers.size():
+		return loop
+
+	for p in left_edge:
+		loop.push_back(Vector2(p.x, p.z))
+
+	var end_idx := centers.size() - 1
+	var end_center := Vector2(centers[end_idx].x, centers[end_idx].z)
+	var end_prev := Vector2(centers[end_idx - 1].x, centers[end_idx - 1].z)
+	var end_tangent := (end_center - end_prev).normalized()
+	if end_tangent.length_squared() <= 0.000000000001:
+		end_tangent = Vector2(0.0, 1.0)
+	var end_right := Vector2(right_edge[end_idx].x, right_edge[end_idx].z) - end_center
+	var end_radius := end_right.length()
+	if end_radius > 0.0001:
+		var end_cap_steps := clampi(6 + band_count * 2, 8, 48)
+		for step in range(1, end_cap_steps):
+			var t := float(step) / float(end_cap_steps)
+			var angle := lerpf(-PI * 0.5, PI * 0.5, t)
+			var dir := end_tangent * cos(angle) + end_right.normalized() * sin(angle)
+			loop.push_back(end_center + dir * end_radius)
+
+	for i in range(right_edge.size() - 1, -1, -1):
+		var p := right_edge[i]
+		loop.push_back(Vector2(p.x, p.z))
+
+	var start_center := Vector2(centers[0].x, centers[0].z)
+	var start_next := Vector2(centers[1].x, centers[1].z)
+	var start_tangent := (start_next - start_center).normalized()
+	if start_tangent.length_squared() <= 0.000000000001:
+		start_tangent = Vector2(0.0, 1.0)
+	var start_right := Vector2(right_edge[0].x, right_edge[0].z) - start_center
+	var start_radius := start_right.length()
+	if start_radius > 0.0001:
+		var start_cap_steps := clampi(6 + band_count * 2, 8, 48)
+		for step in range(1, start_cap_steps):
+			var t := float(step) / float(start_cap_steps)
+			var angle := lerpf(PI * 0.5, -PI * 0.5, t)
+			var dir := -start_tangent * cos(angle) + start_right.normalized() * sin(angle)
+			loop.push_back(start_center + dir * start_radius)
+
+	return loop
+
+
+func _semicircle_profile_t(t: float, curve: float = 1.0) -> float:
+	var x := clampf(t, 0.0, 1.0)
+	x = pow(x, maxf(0.2, curve))
+	var inv := 1.0 - x
+	return sqrt(maxf(0.0, 1.0 - inv * inv))
+
+
+func _terrain_influence_cross_profile(dist_t: float, curve: float) -> float:
+	var x := clampf(dist_t, 0.0, 1.0)
+	if x >= 0.999999:
+		return 0.0
+	var shaped := pow(x, maxf(0.2, curve))
+	return sqrt(maxf(0.0, 1.0 - shaped * shaped))
+
+
+func _smooth_open_edge_chain(points: PackedVector3Array, blend: float) -> PackedVector3Array:
+	if points.size() < 3 or blend <= 0.0001:
+		return points
+	var out := points
+	var passes := clampi(int(floor(blend / maxf(0.2, sample_step))), 1, 4)
+	var factor := clampf(blend / maxf(0.001, blend + 1.0), 0.1, 0.75)
+	for _pass in range(passes):
+		var src := out
+		var dst := src
+		for i in range(1, src.size() - 1):
+			var avg := (src[i - 1] + src[i] + src[i + 1]) / 3.0
+			dst[i] = src[i].lerp(avg, factor)
+		out = dst
+	return out
+
+
+func _append_terrain_influence_fill_faces(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	terrain_indices: PackedInt32Array
+) -> void:
+	if _terrain_influence_strips.is_empty():
+		return
+	for strip_idx in range(_terrain_influence_strips.size()):
+		var strip: Dictionary = _terrain_influence_strips[strip_idx]
+		var outer_vertex_ids: Dictionary = {}
+		var band_loops_data: Array = strip.get("band_loops_raw", [])
+		if band_loops_data.is_empty():
+			band_loops_data = strip.get("band_loops", [])
+		if band_loops_data.is_empty():
+			var fallback_loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
+			_append_terrain_influence_loop_fill(strip, fallback_loop, PackedVector2Array(), verts, normals, uvs, terrain_indices)
+			strip["outer_vertex_ids"] = outer_vertex_ids
+			_terrain_influence_strips[strip_idx] = strip
+			continue
+		# Use the exact clipping loop for the outer ring to avoid T-junction seams.
+		var clip_loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
+		var use_clip_loop := clip_loop.size() >= 3
+		var loops: Array = []
+		var maps: Array = []
+		for li in range(band_loops_data.size()):
+			var loop: PackedVector2Array = band_loops_data[li]
+			if use_clip_loop and li == band_loops_data.size() - 1:
+				loop = clip_loop
+			if loop.size() < 3:
+				continue
+			loops.push_back(loop)
+			var force_flat_edge := use_clip_loop and li == band_loops_data.size() - 1
+			var local_to_global := _append_terrain_influence_loop_vertices(strip, loop, verts, normals, uvs, force_flat_edge)
+			maps.push_back(local_to_global)
+			if force_flat_edge:
+				for vid_raw in local_to_global:
+					outer_vertex_ids[int(vid_raw)] = true
+		if loops.is_empty():
+			strip["outer_vertex_ids"] = outer_vertex_ids
+			_terrain_influence_strips[strip_idx] = strip
+			continue
+		_append_terrain_influence_loop_triangulation(loops[0], maps[0], terrain_indices)
+		for li in range(1, loops.size()):
+			var inner_loop: PackedVector2Array = loops[li - 1]
+			var outer_loop: PackedVector2Array = loops[li]
+			var inner_map: PackedInt32Array = maps[li - 1]
+			var outer_map: PackedInt32Array = maps[li]
+			if inner_loop.size() != outer_loop.size():
+				_append_terrain_influence_loop_fill(strip, outer_loop, inner_loop, verts, normals, uvs, terrain_indices)
+				continue
+			_append_terrain_influence_loop_bridge(inner_map, outer_map, terrain_indices)
+		strip["outer_vertex_ids"] = outer_vertex_ids
+		_terrain_influence_strips[strip_idx] = strip
+
+
+func _append_terrain_influence_loop_vertices(
+	strip: Dictionary,
+	loop: PackedVector2Array,
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	force_flat_edge: bool = false
+) -> PackedInt32Array:
+	var local_to_global := PackedInt32Array()
+	local_to_global.resize(loop.size())
+	for i in range(loop.size()):
+		var p2 := loop[i]
+		var y := _sample_terrain_influence_centerline_height(strip, p2)
+		if force_flat_edge:
+			y = _sample_terrain_influence_centerline_base_height(strip, p2)
+		var p3 := Vector3(p2.x, y, p2.y)
+		local_to_global[i] = verts.size()
+		verts.push_back(p3)
+		normals.push_back(Vector3.UP)
+		uvs.push_back(Vector2(p3.x, p3.z) * uv_length_scale)
+	return local_to_global
+
+
+func _append_terrain_influence_loop_triangulation(
+	loop: PackedVector2Array,
+	local_to_global: PackedInt32Array,
+	terrain_indices: PackedInt32Array
+) -> void:
+	if loop.size() < 3 or local_to_global.size() != loop.size():
+		return
+	var tri_local: PackedInt32Array = Geometry2D.triangulate_polygon(loop)
+	if tri_local.size() < 3:
+		return
+	var tri_count := tri_local.size() - (tri_local.size() % 3)
+	for i in range(0, tri_count, 3):
+		var ia := int(tri_local[i])
+		var ib := int(tri_local[i + 1])
+		var ic := int(tri_local[i + 2])
+		if ia < 0 or ib < 0 or ic < 0:
+			continue
+		if ia >= local_to_global.size() or ib >= local_to_global.size() or ic >= local_to_global.size():
+			continue
+		var ga := int(local_to_global[ia])
+		var gb := int(local_to_global[ib])
+		var gc := int(local_to_global[ic])
+		if invert_faces:
+			terrain_indices.push_back(ga)
+			terrain_indices.push_back(gc)
+			terrain_indices.push_back(gb)
+		else:
+			terrain_indices.push_back(ga)
+			terrain_indices.push_back(gb)
+			terrain_indices.push_back(gc)
+
+
+func _append_terrain_influence_loop_bridge(
+	inner_map: PackedInt32Array,
+	outer_map: PackedInt32Array,
+	terrain_indices: PackedInt32Array
+) -> void:
+	var count := inner_map.size()
+	if count < 3 or outer_map.size() != count:
+		return
+	for i in range(count):
+		var ni := (i + 1) % count
+		var ii := int(inner_map[i])
+		var inx := int(inner_map[ni])
+		var oi := int(outer_map[i])
+		var onx := int(outer_map[ni])
+		if invert_faces:
+			terrain_indices.push_back(ii)
+			terrain_indices.push_back(onx)
+			terrain_indices.push_back(oi)
+			terrain_indices.push_back(ii)
+			terrain_indices.push_back(inx)
+			terrain_indices.push_back(onx)
+		else:
+			terrain_indices.push_back(ii)
+			terrain_indices.push_back(oi)
+			terrain_indices.push_back(onx)
+			terrain_indices.push_back(ii)
+			terrain_indices.push_back(onx)
+			terrain_indices.push_back(inx)
+
+
+func _append_terrain_influence_loop_fill(
+	strip: Dictionary,
+	loop_raw: PackedVector2Array,
+	inner_loop_raw: PackedVector2Array,
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	terrain_indices: PackedInt32Array
+) -> void:
+	var loop := _compact_polygon2d_xz(loop_raw, 0.001)
+	if loop.size() < 3:
+		return
+	var inner_loop := _compact_polygon2d_xz(inner_loop_raw, 0.001)
+	var has_inner := inner_loop.size() >= 3
+	var tri_local: PackedInt32Array = Geometry2D.triangulate_polygon(loop)
+	if tri_local.size() < 3:
+		return
+	var local_to_global := PackedInt32Array()
+	local_to_global.resize(loop.size())
+	for i in range(loop.size()):
+		var p2 := loop[i]
+		var y := _sample_terrain_influence_centerline_height(strip, p2)
+		var p3 := Vector3(p2.x, y, p2.y)
+		local_to_global[i] = verts.size()
+		verts.push_back(p3)
+		normals.push_back(Vector3.UP)
+		uvs.push_back(Vector2(p3.x, p3.z) * uv_length_scale)
+	var tri_count := tri_local.size() - (tri_local.size() % 3)
+	for i in range(0, tri_count, 3):
+		var ia := int(tri_local[i])
+		var ib := int(tri_local[i + 1])
+		var ic := int(tri_local[i + 2])
+		if ia < 0 or ib < 0 or ic < 0:
+			continue
+		if ia >= local_to_global.size() or ib >= local_to_global.size() or ic >= local_to_global.size():
+			continue
+		if has_inner:
+			var centroid := (loop[ia] + loop[ib] + loop[ic]) / 3.0
+			if Geometry2D.is_point_in_polygon(centroid, inner_loop):
+				continue
+		var ga := int(local_to_global[ia])
+		var gb := int(local_to_global[ib])
+		var gc := int(local_to_global[ic])
+		if invert_faces:
+			terrain_indices.push_back(ga)
+			terrain_indices.push_back(gc)
+			terrain_indices.push_back(gb)
+		else:
+			terrain_indices.push_back(ga)
+			terrain_indices.push_back(gb)
+			terrain_indices.push_back(gc)
+
+
+func _sample_terrain_influence_centerline_height(strip: Dictionary, point: Vector2) -> float:
+	var base_y := _sample_terrain_influence_centerline_base_height(strip, point)
+	var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+	if points.size() < 2:
+		return terrain_fill_base_height + y_offset
+	var half_width := maxf(0.0, float(strip.get("half_width", 0.0)))
+	var blend := maxf(0.0, float(strip.get("blend", 0.0)))
+	var max_dist := maxf(0.0001, half_width + blend)
+	var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
+	var profile_height := float(strip.get("profile_height", 0.0))
+	var best_dist := _distance_to_centerline_2d(points, point)
+	var dist_t := clampf(best_dist / max_dist, 0.0, 1.0)
+	var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve)
+	return base_y + profile_height * profile_peak
+
+
+func _sample_terrain_influence_centerline_base_height(strip: Dictionary, point: Vector2) -> float:
+	var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+	if points.size() < 2:
+		return terrain_fill_base_height + y_offset
+	var best_dist := INF
+	var best_y := points[0].y
+	for i in range(points.size() - 1):
+		var a := points[i]
+		var b := points[i + 1]
+		var a2 := Vector2(a.x, a.z)
+		var b2 := Vector2(b.x, b.z)
+		var t := _closest_point_param_on_segment_2d(point, a2, b2)
+		var c := a2.lerp(b2, t)
+		var d := point.distance_to(c)
+		if d >= best_dist:
+			continue
+		best_dist = d
+		best_y = lerpf(a.y, b.y, t)
+	return best_y
+
+
+func _distance_to_centerline_2d(points: PackedVector3Array, point: Vector2) -> float:
+	if points.size() < 2:
+		return INF
+	var best := INF
+	for i in range(points.size() - 1):
+		var a2 := Vector2(points[i].x, points[i].z)
+		var b2 := Vector2(points[i + 1].x, points[i + 1].z)
+		var t := _closest_point_param_on_segment_2d(point, a2, b2)
+		var c := a2.lerp(b2, t)
+		best = minf(best, point.distance_to(c))
+	return best
+
+
+func _apply_terrain_influence_strips_to_mesh(
+	verts: PackedVector3Array,
+	terrain_indices: PackedInt32Array
+) -> void:
+	if _terrain_influence_strips.is_empty() or terrain_indices.is_empty():
+		return
+	var terrain_vertex_ids: Dictionary = {}
+	for idx_raw in terrain_indices:
+		var idx := int(idx_raw)
+		if idx >= 0 and idx < verts.size():
+			terrain_vertex_ids[idx] = true
+	for idx_key in terrain_vertex_ids.keys():
+		var vi := int(idx_key)
+		var p := verts[vi]
+		var p2 := Vector2(p.x, p.z)
+		var best_weight := 0.0
+		var best_target_y := p.y
+		for strip_raw in _terrain_influence_strips:
+			var strip: Dictionary = strip_raw
+			var outer_vertex_ids: Dictionary = strip.get("outer_vertex_ids", {})
+			var lock_outer_vertex := bool(outer_vertex_ids.get(vi, false))
+			var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+			if points.size() < 2:
+				continue
+			var half_width := maxf(0.0, float(strip.get("half_width", 0.0)))
+			var blend := maxf(0.0, float(strip.get("blend", 0.0)))
+			var strength := clampf(float(strip.get("strength", 1.0)), 0.0, 1.0)
+			var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
+			var profile_height := float(strip.get("profile_height", 0.0))
+			var max_dist := half_width + blend
+			if max_dist <= 0.0001 or strength <= 0.0001:
+				continue
+			for i in range(points.size() - 1):
+				var a: Vector3 = points[i]
+				var b: Vector3 = points[i + 1]
+				var a2 := Vector2(a.x, a.z)
+				var b2 := Vector2(b.x, b.z)
+				var t := _closest_point_param_on_segment_2d(p2, a2, b2)
+				var closest := a2.lerp(b2, t)
+				var dist := p2.distance_to(closest)
+				if dist > max_dist:
+					continue
+				var edge_weight := 1.0
+				if blend > 0.0001 and dist > half_width:
+					edge_weight = 1.0 - clampf((dist - half_width) / blend, 0.0, 1.0)
+				elif dist > half_width:
+					edge_weight = 0.0
+				if edge_weight <= 0.0001:
+					continue
+				edge_weight = edge_weight * edge_weight * (3.0 - 2.0 * edge_weight)
+				edge_weight *= strength
+				if edge_weight <= best_weight:
+					continue
+				best_weight = edge_weight
+				var dist_t := clampf(dist / max_dist, 0.0, 1.0)
+				var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve)
+				if lock_outer_vertex:
+					profile_peak = 0.0
+				best_target_y = lerpf(a.y, b.y, t) + profile_height * profile_peak
+		if best_weight > 0.0001:
+			p.y = lerpf(p.y, best_target_y, best_weight)
+			verts[vi] = p
+
+
+func _closest_point_param_on_segment_2d(point: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len_sq := ab.length_squared()
+	if len_sq <= 0.000000000001:
+		return 0.0
+	return clampf((point - a).dot(ab) / len_sq, 0.0, 1.0)
+
+
 func _resolve_path_component_width(
 	path: Path3D,
 	dist: float,
@@ -4803,6 +5744,68 @@ func _clear_mesh_node() -> void:
 	if legacy != null:
 		_debug_log("clearing legacy node: " + LEGACY_MESH_NODE_NAME)
 		legacy.queue_free()
+	_clear_terrain_influence_debug_node()
+
+
+func _update_terrain_influence_debug_visual() -> void:
+	if not terrain_influence_debug_draw or _terrain_influence_strips.is_empty():
+		_clear_terrain_influence_debug_node()
+		return
+	var mi := get_node_or_null(TERRAIN_INFLUENCE_DEBUG_NODE_NAME) as MeshInstance3D
+	if mi == null:
+		mi = MeshInstance3D.new()
+		mi.name = TERRAIN_INFLUENCE_DEBUG_NODE_NAME
+		add_child(mi)
+		if Engine.is_editor_hint():
+			mi.owner = get_tree().edited_scene_root
+	var debug_mesh := ImmediateMesh.new()
+	debug_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	debug_mesh.surface_set_color(terrain_influence_debug_color)
+	for strip_raw in _terrain_influence_strips:
+		var strip: Dictionary = strip_raw
+		var band_left_edges: Array = strip.get("band_left_edges", [])
+		var band_right_edges: Array = strip.get("band_right_edges", [])
+		for edge_raw in band_left_edges:
+			var edge: PackedVector3Array = edge_raw
+			_append_debug_line_chain(debug_mesh, edge, false)
+		for edge_raw in band_right_edges:
+			var edge: PackedVector3Array = edge_raw
+			_append_debug_line_chain(debug_mesh, edge, false)
+		var loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
+		if loop.size() >= 3:
+			var avg_y := 0.0
+			var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+			if not points.is_empty():
+				for p in points:
+					avg_y += p.y
+				avg_y /= float(points.size())
+			for i in range(loop.size()):
+				var a := loop[i]
+				var b := loop[(i + 1) % loop.size()]
+				debug_mesh.surface_add_vertex(Vector3(a.x, avg_y + terrain_influence_debug_lift, a.y))
+				debug_mesh.surface_add_vertex(Vector3(b.x, avg_y + terrain_influence_debug_lift, b.y))
+	debug_mesh.surface_end()
+	mi.mesh = debug_mesh
+	mi.material_override = null
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _append_debug_line_chain(debug_mesh: ImmediateMesh, edge: PackedVector3Array, closed: bool) -> void:
+	if edge.size() < 2:
+		return
+	var lift_vec := Vector3.UP * terrain_influence_debug_lift
+	for i in range(edge.size() - 1):
+		debug_mesh.surface_add_vertex(edge[i] + lift_vec)
+		debug_mesh.surface_add_vertex(edge[i + 1] + lift_vec)
+	if closed:
+		debug_mesh.surface_add_vertex(edge[edge.size() - 1] + lift_vec)
+		debug_mesh.surface_add_vertex(edge[0] + lift_vec)
+
+
+func _clear_terrain_influence_debug_node() -> void:
+	var node := get_node_or_null(TERRAIN_INFLUENCE_DEBUG_NODE_NAME)
+	if node != null:
+		node.queue_free()
 
 
 func _build_signature() -> String:
@@ -4818,64 +5821,18 @@ func _build_signature() -> String:
 	parts.append(str(road_material_override))
 	parts.append(str(shoulder_material_override))
 	parts.append(str(sidewalk_material_override))
-	parts.append(str(terrain_left_width))
-	parts.append(str(terrain_right_width))
-	parts.append(str(terrain_road_clearance))
-	parts.append(str(terrain_detection_width_scale))
-	parts.append(str(terrain_growth_scan_step))
-	parts.append(str(terrain_growth_max_delta_per_row))
-	parts.append(str(terrain_skirt_depth))
-	parts.append(str(terrain_skirt_segments))
-	parts.append(str(terrain_skirt_outward))
-	parts.append(str(terrain_skirt_profile))
-	parts.append(str(terrain_skirt_soften_slope_deg))
-	parts.append(str(terrain_skirt_soften_max_drop))
-	parts.append(str(terrain_skirt_soften_power))
-	parts.append(str(terrain_skirt_soften_area_rings))
-	parts.append(str(terrain_skirt_soften_area_falloff))
-	parts.append(str(terrain_skirt_soften_row_smooth_passes))
-	parts.append(str(terrain_subdivisions))
-	parts.append(str(terrain_adaptive_subdivisions_enabled))
-	parts.append(str(terrain_adaptive_subdivisions_per_meter))
-	parts.append(str(terrain_adaptive_noise_quality))
-	parts.append(str(terrain_adaptive_subdivisions_max))
-	parts.append(str(terrain_noise_enabled))
-	parts.append(str(terrain_noise_amplitude))
-	parts.append(str(terrain_noise_frequency))
-	parts.append(str(terrain_noise_seed))
-	parts.append(str(terrain_noise_falloff))
-	parts.append(str(terrain_heightmap_enabled))
-	parts.append(str(terrain_heightmap_texture))
-	parts.append(str(terrain_heightmap_amplitude))
-	parts.append(str(terrain_heightmap_signed))
-	parts.append(str(terrain_heightmap_invert))
-	parts.append(str(terrain_heightmap_uv_scale))
-	parts.append(str(terrain_heightmap_uv_offset))
-	parts.append(str(terrain_heightmap_falloff))
-	parts.append(str(terrain_cut_fill_mode))
-	parts.append(str(terrain_artifact_safe_stitch))
-	parts.append(str(terrain_chain_smooth_passes))
-	parts.append(str(terrain_boolean_fill_enabled))
-	parts.append(str(terrain_boolean_padding))
-	parts.append(str(terrain_boolean_base_height))
-	parts.append(str(terrain_boolean_height_match_epsilon))
-	parts.append(str(terrain_boolean_height_match_max_distance))
-	parts.append(str(terrain_boolean_solver_mode))
-	parts.append(str(terrain_boolean_clip_width_mode))
-	parts.append(str(terrain_rect_fill_enabled))
+	parts.append(str(terrain_fill_algorithm))
+	parts.append(str(terrain_fill_base_height))
+	parts.append(str(terrain_fill_height_match_epsilon))
+	parts.append(str(terrain_fill_height_match_max_distance))
+	parts.append("outer")
 	parts.append(str(terrain_rect_fill_cell_size))
-	parts.append(str(terrain_rect_fill_max_cells))
-	parts.append(str(terrain_rect_fill_padding))
-	parts.append(str(terrain_rect_fill_base_height))
-	parts.append(str(terrain_rect_fill_height_match_epsilon))
-	parts.append(str(terrain_rect_fill_height_match_max_distance))
+	parts.append(str(TERRAIN_RECT_FILL_MAX_TRIANGLES))
 	parts.append(str(terrain_rect_fill_road_margin))
-	parts.append(str(terrain_rect_fill_clip_width_mode))
-	parts.append(str(terrain_material_override))
+	parts.append("outer")
 	parts.append(str(outer_wall_height))
 	parts.append(str(outer_wall_material_override))
 	parts.append(str(material_override))
-	parts.append(str(uv_length_scale))
 	parts.append(str(invert_faces))
 	parts.append(str(endpoint_snap_distance))
 	parts.append(str(allow_endpoint_to_midpath))
@@ -4887,11 +5844,40 @@ func _build_signature() -> String:
 	parts.append(str(adaptive_sampling_step_scale))
 	parts.append(str(adaptive_sampling_radius_scale))
 	parts.append(str(adaptive_sampling_offset))
+	parts.append(str(terrain_influence_debug_draw))
+	parts.append(str(terrain_influence_debug_color))
+	parts.append(str(terrain_influence_debug_lift))
 
 	var paths := _resolve_paths()
 	parts.append(str(paths.size()))
 	for p in paths:
 		parts.append(str(p.global_transform))
+		if _path_is_terrain_influence_only(p):
+			parts.append("terrain_influence_path")
+			if p.has_method("get_terrain_influence_width"):
+				parts.append(str(p.call("get_terrain_influence_width")))
+			if p.has_method("get_terrain_influence_flatten_blend"):
+				parts.append(str(p.call("get_terrain_influence_flatten_blend")))
+			if p.has_method("get_terrain_influence_flatten_strength"):
+				parts.append(str(p.call("get_terrain_influence_flatten_strength")))
+			if p.has_method("get_terrain_influence_band_count"):
+				parts.append(str(p.call("get_terrain_influence_band_count")))
+			if p.has_method("get_terrain_influence_profile_curve"):
+				parts.append(str(p.call("get_terrain_influence_profile_curve")))
+			if p.has_method("get_terrain_influence_profile_height"):
+				parts.append(str(p.call("get_terrain_influence_profile_height")))
+			if p.has_method("has_adaptive_sampling_overrides"):
+				parts.append(str(p.call("has_adaptive_sampling_overrides")))
+			if p.has_method("get_adaptive_sampling_enabled"):
+				parts.append(str(p.call("get_adaptive_sampling_enabled")))
+			if p.has_method("get_adaptive_sampling_advanced"):
+				parts.append(str(p.call("get_adaptive_sampling_advanced")))
+			if p.has_method("get_adaptive_sampling_step_scale"):
+				parts.append(str(p.call("get_adaptive_sampling_step_scale")))
+			if p.has_method("get_adaptive_sampling_radius_scale"):
+				parts.append(str(p.call("get_adaptive_sampling_radius_scale")))
+			if p.has_method("get_adaptive_sampling_offset"):
+				parts.append(str(p.call("get_adaptive_sampling_offset")))
 		if p.curve == null:
 			parts.append("null_curve")
 			continue

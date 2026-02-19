@@ -57,7 +57,6 @@ var terrain_fill_outer_padding := 0.0
 @export_subgroup("Rectangle")
 @export_range(0.1, 50.0, 0.1) var terrain_rect_fill_cell_size := 1.0
 @export_range(0.0, 2.0, 0.001) var terrain_rect_fill_road_margin := 0.0
-@export_range(0.0, 0.2, 0.001) var terrain_influence_fill_edge_overlap := 0.015
 @export_group("Weld")
 @export_range(0.1, 30.0, 0.1) var endpoint_snap_distance := 2.0
 @export var allow_endpoint_to_midpath := true
@@ -74,6 +73,8 @@ var terrain_fill_outer_padding := 0.0
 @export_group("Workflow")
 @export var generate_in_editor := true
 @export var auto_regenerate_in_editor := true
+@export var threaded_generation_enabled := true
+@export var threaded_show_road_preview := true
 @export var regenerate_now := false: set = _set_regenerate_now
 @export var debug_generation_logs := true
 @export_group("Terrain Influence Debug")
@@ -158,6 +159,8 @@ var uv_length_scale := 0.2
 var _last_signature := ""
 var _terrain_influence_strips: Array = []
 var _terrain_influence_loops: Array = []
+var _generation_thread: Thread
+var _thread_regenerate_requested := false
 
 
 func _ready() -> void:
@@ -169,6 +172,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_poll_threaded_generation()
 	if not Engine.is_editor_hint():
 		return
 	if not auto_regenerate_in_editor:
@@ -182,6 +186,10 @@ func _process(_delta: float) -> void:
 
 	_last_signature = sig
 	regenerate()
+
+
+func _exit_tree() -> void:
+	_join_generation_thread()
 
 
 func _set_regenerate_now(value: bool) -> void:
@@ -332,10 +340,6 @@ func _validate_property(property: Dictionary) -> void:
 		property.name == "terrain_rect_fill_road_margin"
 	) and terrain_fill_algorithm != TERRAIN_FILL_RECTANGLE:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
-	if (
-		property.name == "terrain_influence_fill_edge_overlap"
-	) and terrain_fill_algorithm == TERRAIN_FILL_DISABLED:
-		property.usage = PROPERTY_USAGE_NO_EDITOR
 
 
 func _can_generate() -> bool:
@@ -349,6 +353,11 @@ func _debug_log(message: String) -> void:
 
 
 func regenerate() -> void:
+	if threaded_generation_enabled and _is_generation_thread_active():
+		_thread_regenerate_requested = true
+		_last_signature = _build_signature()
+		_debug_log("regenerate() deferred while threaded finalize is running.")
+		return
 	_debug_log("regenerate() start on " + str(get_path()))
 	_cleanup_legacy_generated_children()
 
@@ -464,7 +473,8 @@ func regenerate() -> void:
 			if not strip.is_empty():
 				_terrain_influence_strips.push_back(strip)
 				var loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
-				if loop.size() >= 3:
+				var clip_base_terrain_by_loop := bool(strip.get("clip_base_terrain_by_loop", strip.get("generate_surface", true)))
+				if clip_base_terrain_by_loop and loop.size() >= 3:
 					_terrain_influence_loops.push_back(loop)
 			path_rows[path_idx] = rows_info
 			continue
@@ -673,12 +683,17 @@ func regenerate() -> void:
 			"assign mesh (low sockets): verts=%s lane=%s shoulder=%s sidewalk=%s terrain=%s wall=%s"
 			% [verts.size(), lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size(), terrain_indices.size(), wall_indices.size()]
 		)
-		_append_terrain_with_mode(verts, normals, uvs, terrain_indices, path_rows, lane_indices, shoulder_indices, sidewalk_indices)
-		_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
-		_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
-		_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
-		_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
-		_last_signature = _build_signature()
+		_finalize_generation(
+			verts,
+			normals,
+			uvs,
+			lane_indices,
+			shoulder_indices,
+			sidewalk_indices,
+			terrain_indices,
+			wall_indices,
+			path_rows
+		)
 		return
 
 	var clusters := _cluster_sockets(sockets, minimum_connections, path_weld_snap, 1.0)
@@ -692,12 +707,17 @@ func regenerate() -> void:
 			"assign mesh (no clusters): verts=%s lane=%s shoulder=%s sidewalk=%s terrain=%s wall=%s"
 			% [verts.size(), lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size(), terrain_indices.size(), wall_indices.size()]
 		)
-		_append_terrain_with_mode(verts, normals, uvs, terrain_indices, path_rows, lane_indices, shoulder_indices, sidewalk_indices)
-		_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
-		_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
-		_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
-		_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
-		_last_signature = _build_signature()
+		_finalize_generation(
+			verts,
+			normals,
+			uvs,
+			lane_indices,
+			shoulder_indices,
+			sidewalk_indices,
+			terrain_indices,
+			wall_indices,
+			path_rows
+		)
 		return
 
 	for cluster in clusters:
@@ -879,6 +899,90 @@ func regenerate() -> void:
 		"assign mesh (welded): verts=%s lane=%s shoulder=%s sidewalk=%s terrain=%s wall=%s"
 		% [verts.size(), lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size(), terrain_indices.size(), wall_indices.size()]
 	)
+	_finalize_generation(
+		verts,
+		normals,
+		uvs,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		terrain_indices,
+		wall_indices,
+		path_rows,
+		stripped_side_indices
+	)
+
+
+func _finalize_generation(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array,
+	terrain_indices: PackedInt32Array,
+	wall_indices: PackedInt32Array,
+	path_rows: Array,
+	blocked_side_vertices: Dictionary = {}
+) -> void:
+	if threaded_generation_enabled and _start_threaded_finalize(
+		verts,
+		normals,
+		uvs,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		terrain_indices,
+		wall_indices,
+		path_rows,
+		blocked_side_vertices
+	):
+		if threaded_show_road_preview:
+			_assign_road_preview_mesh(
+				verts,
+				normals,
+				uvs,
+				lane_indices,
+				shoulder_indices,
+				sidewalk_indices
+			)
+		return
+	_finalize_generation_prepare_terrain_and_walls(
+		verts,
+		normals,
+		uvs,
+		terrain_indices,
+		path_rows,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		wall_indices,
+		blocked_side_vertices
+	)
+	_finalize_generation_after_terrain_and_walls(
+		verts,
+		normals,
+		uvs,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		terrain_indices,
+		wall_indices
+	)
+
+
+func _finalize_generation_prepare_terrain_and_walls(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	terrain_indices: PackedInt32Array,
+	path_rows: Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array,
+	wall_indices: PackedInt32Array,
+	blocked_side_vertices: Dictionary = {}
+) -> void:
 	_append_terrain_with_mode(
 		verts,
 		normals,
@@ -888,13 +992,219 @@ func regenerate() -> void:
 		lane_indices,
 		shoulder_indices,
 		sidewalk_indices,
-		stripped_side_indices
+		blocked_side_vertices
 	)
-	_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
-	_apply_terrain_influence_strips_to_mesh(verts, terrain_indices)
 	_append_outer_walls_from_path_rows(verts, normals, uvs, wall_indices, path_rows)
-	_assign_mesh(_build_mesh(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices, terrain_indices, wall_indices))
+
+
+func _finalize_generation_after_terrain_and_walls(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array,
+	terrain_indices: PackedInt32Array,
+	wall_indices: PackedInt32Array,
+	influence_already_applied := false
+) -> void:
+	var over_road_snap_context := _build_over_road_snap_context(
+		verts,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices
+	)
+	if not influence_already_applied:
+		_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices)
+		_apply_terrain_influence_strips_to_mesh(
+			verts,
+			terrain_indices,
+			[],
+			over_road_snap_context
+		)
+	_assign_mesh(
+		_build_mesh(
+			verts,
+			normals,
+			uvs,
+			lane_indices,
+			shoulder_indices,
+			sidewalk_indices,
+			terrain_indices,
+			wall_indices
+		)
+	)
 	_last_signature = _build_signature()
+
+
+func _assign_road_preview_mesh(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array
+) -> void:
+	if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
+		return
+	var empty := PackedInt32Array()
+	_assign_mesh(
+		_build_mesh(
+			verts,
+			normals,
+			uvs,
+			lane_indices,
+			shoulder_indices,
+			sidewalk_indices,
+			empty,
+			empty
+		)
+	)
+	_debug_log("threaded road preview applied.")
+
+
+func _start_threaded_finalize(
+	verts: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array,
+	terrain_indices: PackedInt32Array,
+	wall_indices: PackedInt32Array,
+	path_rows: Array,
+	blocked_side_vertices: Dictionary = {}
+) -> bool:
+	if _is_generation_thread_active():
+		return false
+	if _generation_thread != null:
+		_generation_thread.wait_to_finish()
+		_generation_thread = null
+	var job := {
+		"verts": verts,
+		"normals": normals,
+		"uvs": uvs,
+		"lane_indices": lane_indices,
+		"shoulder_indices": shoulder_indices,
+		"sidewalk_indices": sidewalk_indices,
+		"terrain_indices": terrain_indices,
+		"wall_indices": wall_indices,
+		"path_rows": path_rows,
+		"blocked_side_vertices": blocked_side_vertices,
+		"terrain_influence_strips": _terrain_influence_strips.duplicate(true),
+	}
+	_generation_thread = Thread.new()
+	var err := _generation_thread.start(Callable(self, "_thread_finalize_generation_job").bind(job))
+	if err != OK:
+		push_warning("SplineRoadWelded: threaded finalize failed to start; fallback to main thread.")
+		_generation_thread = null
+		return false
+	_thread_regenerate_requested = false
+	_last_signature = _build_signature()
+	_debug_log("threaded finalize started.")
+	return true
+
+
+func _thread_finalize_generation_job(job: Dictionary) -> Dictionary:
+	var verts: PackedVector3Array = job.get("verts", PackedVector3Array())
+	var normals: PackedVector3Array = job.get("normals", PackedVector3Array())
+	var uvs: PackedVector2Array = job.get("uvs", PackedVector2Array())
+	var lane_indices: PackedInt32Array = job.get("lane_indices", PackedInt32Array())
+	var shoulder_indices: PackedInt32Array = job.get("shoulder_indices", PackedInt32Array())
+	var sidewalk_indices: PackedInt32Array = job.get("sidewalk_indices", PackedInt32Array())
+	var terrain_indices: PackedInt32Array = job.get("terrain_indices", PackedInt32Array())
+	var wall_indices: PackedInt32Array = job.get("wall_indices", PackedInt32Array())
+	var path_rows: Array = job.get("path_rows", [])
+	var blocked_side_vertices: Dictionary = job.get("blocked_side_vertices", {})
+	var terrain_influence_strips: Array = job.get("terrain_influence_strips", [])
+	_finalize_generation_prepare_terrain_and_walls(
+		verts,
+		normals,
+		uvs,
+		terrain_indices,
+		path_rows,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		wall_indices,
+		blocked_side_vertices
+	)
+	var over_road_snap_context := _build_over_road_snap_context(
+		verts,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices
+	)
+	_append_terrain_influence_fill_faces(verts, normals, uvs, terrain_indices, terrain_influence_strips)
+	_apply_terrain_influence_strips_to_mesh(
+		verts,
+		terrain_indices,
+		terrain_influence_strips,
+		over_road_snap_context
+	)
+	job["ok"] = true
+	job["influence_applied"] = true
+	return job
+
+
+func _poll_threaded_generation() -> void:
+	if _generation_thread == null:
+		return
+	if _generation_thread.is_alive():
+		return
+	var result: Variant = _generation_thread.wait_to_finish()
+	_generation_thread = null
+	if _thread_regenerate_requested:
+		_thread_regenerate_requested = false
+		_debug_log("threaded finalize result discarded; regenerate requested during job.")
+		if _can_generate():
+			regenerate()
+		return
+	if typeof(result) != TYPE_DICTIONARY:
+		push_warning("SplineRoadWelded: threaded finalize returned invalid result.")
+		return
+	if not _can_generate():
+		_debug_log("threaded finalize ready but generation is currently disabled; result discarded.")
+		return
+	_apply_threaded_finalize_result(result)
+
+
+func _apply_threaded_finalize_result(result: Dictionary) -> void:
+	if not bool(result.get("ok", false)):
+		push_warning("SplineRoadWelded: threaded finalize reported failure.")
+		return
+	var verts: PackedVector3Array = result.get("verts", PackedVector3Array())
+	var normals: PackedVector3Array = result.get("normals", PackedVector3Array())
+	var uvs: PackedVector2Array = result.get("uvs", PackedVector2Array())
+	var lane_indices: PackedInt32Array = result.get("lane_indices", PackedInt32Array())
+	var shoulder_indices: PackedInt32Array = result.get("shoulder_indices", PackedInt32Array())
+	var sidewalk_indices: PackedInt32Array = result.get("sidewalk_indices", PackedInt32Array())
+	var terrain_indices: PackedInt32Array = result.get("terrain_indices", PackedInt32Array())
+	var wall_indices: PackedInt32Array = result.get("wall_indices", PackedInt32Array())
+	var influence_applied := bool(result.get("influence_applied", false))
+	_finalize_generation_after_terrain_and_walls(
+		verts,
+		normals,
+		uvs,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices,
+		terrain_indices,
+		wall_indices,
+		influence_applied
+	)
+	_debug_log("threaded finalize applied.")
+
+
+func _is_generation_thread_active() -> bool:
+	return _generation_thread != null and _generation_thread.is_alive()
+
+
+func _join_generation_thread() -> void:
+	if _generation_thread == null:
+		return
+	_generation_thread.wait_to_finish()
+	_generation_thread = null
 
 
 func _cluster_has_midpath_socket(sockets: Array[Dictionary], cluster: Array) -> bool:
@@ -1827,11 +2137,12 @@ func _append_terrain_from_rect_fill(
 			continue
 		road_parts.push_back(loop)
 	var influence_parts := influence_loops
+	var road_clip_parts := _build_effective_road_clip_parts(road_parts)
 
 	var fill_parts := _build_outer_rect_fill_parts_from_road_parts(road_parts, boundary_points)
 	if fill_parts.is_empty():
 		return
-	for part_raw in road_parts:
+	for part_raw in road_clip_parts:
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
 			continue
@@ -1842,7 +2153,7 @@ func _append_terrain_from_rect_fill(
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
 			continue
-		fill_parts = _clip_fill_parts_by_polygon(fill_parts, part, terrain_influence_fill_edge_overlap)
+		fill_parts = _clip_fill_parts_by_polygon(fill_parts, part)
 		if fill_parts.is_empty():
 			break
 	if fill_parts.is_empty():
@@ -2027,11 +2338,12 @@ func _append_terrain_from_boolean_fill(
 			continue
 		road_parts.push_back(loop)
 	var influence_parts := influence_loops
+	var road_clip_parts := _build_effective_road_clip_parts(road_parts)
 
 	var fill_parts := _build_outer_rect_fill_parts_from_road_parts(road_parts, boundary_points)
 	if fill_parts.is_empty():
 		return
-	for part_raw in road_parts:
+	for part_raw in road_clip_parts:
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
 			continue
@@ -2042,7 +2354,7 @@ func _append_terrain_from_boolean_fill(
 		var part: PackedVector2Array = part_raw
 		if part.size() < 3:
 			continue
-		fill_parts = _clip_fill_parts_by_polygon(fill_parts, part, terrain_influence_fill_edge_overlap)
+		fill_parts = _clip_fill_parts_by_polygon(fill_parts, part)
 		if fill_parts.is_empty():
 			break
 	_debug_log(
@@ -2203,6 +2515,7 @@ func _extract_road_boundary_loops_xz(
 
 	var loops: Array = []
 	var boundary_points: Array = []
+	var boundary_segments: Array = []
 	var boundary_resample_step := maxf(0.05, minf(sample_step * 0.5, maxf(0.05, terrain_rect_fill_cell_size * 0.5)))
 	var boundary_point_cap := 180000
 	for start_key in boundary_keys:
@@ -2257,6 +2570,13 @@ func _extract_road_boundary_loops_xz(
 		if Geometry2D.is_polygon_clockwise(poly):
 			poly.reverse()
 		loops.push_back(poly)
+		if chain_points_3d.size() >= 2:
+			for i in range(chain_points_3d.size()):
+				var a3: Vector3 = chain_points_3d[i]
+				var b3: Vector3 = chain_points_3d[(i + 1) % chain_points_3d.size()]
+				if Vector2(a3.x, a3.z).distance_to(Vector2(b3.x, b3.z)) <= 0.0001:
+					continue
+				boundary_segments.push_back({"a": a3, "b": b3})
 		if chain_points_3d.size() >= 2 and boundary_points.size() < boundary_point_cap:
 			for i in range(chain_points_3d.size()):
 				if boundary_points.size() >= boundary_point_cap:
@@ -2276,6 +2596,7 @@ func _extract_road_boundary_loops_xz(
 	return {
 		"loops": loops,
 		"points": boundary_points,
+		"segments": boundary_segments,
 	}
 
 
@@ -2404,22 +2725,11 @@ func _resample_polygon_edges_for_boolean_fill(poly: PackedVector2Array, max_edge
 	return _compact_polygon2d_xz(out, 0.0005)
 
 
-func _clip_fill_parts_by_polygon(
-	fill_parts: Array,
-	clip_poly: PackedVector2Array,
-	edge_overlap: float = 0.0
-) -> Array:
+func _clip_fill_parts_by_polygon(fill_parts: Array, clip_poly: PackedVector2Array) -> Array:
 	var out: Array = []
 	var clip := _compact_polygon2d_xz(clip_poly, 0.001)
 	if clip.size() < 3:
 		return fill_parts
-	if edge_overlap > 0.0001:
-		var overlap_parts: Array = Geometry2D.offset_polygon(clip, -edge_overlap)
-		if not overlap_parts.is_empty():
-			var overlap_clip := _pick_largest_polygon_part_xz(overlap_parts)
-			overlap_clip = _compact_polygon2d_xz(overlap_clip, 0.001)
-			if overlap_clip.size() >= 3:
-				clip = overlap_clip
 
 	# Ensure clip is clockwise for clip_polygons (subtraction)
 	if not Geometry2D.is_polygon_clockwise(clip):
@@ -2530,6 +2840,197 @@ func _append_terrain_influence_boundary_points(boundary_points: Array) -> void:
 				boundary_points.push_back(Vector3(p2.x, base_y, p2.y))
 
 
+func _build_over_road_snap_context(
+	verts: PackedVector3Array,
+	lane_indices: PackedInt32Array,
+	shoulder_indices: PackedInt32Array,
+	sidewalk_indices: PackedInt32Array
+) -> Dictionary:
+	var zones := _collect_terrain_influence_over_road_snap_zones()
+	if zones.is_empty():
+		return {}
+	var data := _extract_road_boundary_loops_xz(
+		verts,
+		lane_indices,
+		shoulder_indices,
+		sidewalk_indices
+	)
+	var road_boundary_segments: Array = data.get("segments", [])
+	if road_boundary_segments.is_empty():
+		return {}
+	var max_snap_dist := maxf(0.1, minf(2.0, _resolve_effective_fill_height_match_distance() * 0.4))
+	var cell_size := maxf(0.05, max_snap_dist)
+	for zi in range(zones.size()):
+		var zone: Dictionary = zones[zi]
+		var loop: PackedVector2Array = zone.get("loop", PackedVector2Array())
+		var edge_band := maxf(0.01, float(zone.get("edge_band", 0.35)))
+		var edge_segments := _build_loop_boundary_segments_xz([loop])
+		var edge_cell_size := maxf(0.01, minf(cell_size, edge_band))
+		var edge_grid: Dictionary = {}
+		if not edge_segments.is_empty():
+			edge_grid = _build_segment_spatial_hash_2d(edge_segments, edge_cell_size, edge_band)
+		zone["edge_segments"] = edge_segments
+		zone["edge_grid"] = edge_grid
+		zone["edge_cell_size"] = edge_cell_size
+		zone["edge_band"] = edge_band
+		zones[zi] = zone
+	return {
+		"zones": zones,
+		"segments": road_boundary_segments,
+		"grid": _build_segment_spatial_hash_2d(road_boundary_segments, cell_size, max_snap_dist),
+		"cell_size": cell_size,
+		"max_snap_dist": max_snap_dist,
+	}
+
+
+func _build_loop_boundary_segments_xz(loops: Array) -> Array:
+	var out: Array = []
+	for loop_raw in loops:
+		var loop: PackedVector2Array = loop_raw
+		if loop.size() < 2:
+			continue
+		for i in range(loop.size()):
+			var a2: Vector2 = loop[i]
+			var b2: Vector2 = loop[(i + 1) % loop.size()]
+			if a2.distance_to(b2) <= 0.0001:
+				continue
+			out.push_back({
+				"a": Vector3(a2.x, 0.0, a2.y),
+				"b": Vector3(b2.x, 0.0, b2.y),
+			})
+	return out
+
+
+func _build_segment_spatial_hash_2d(segments: Array, cell_size: float, max_dist: float) -> Dictionary:
+	var grid: Dictionary = {}
+	var inv := 1.0 / maxf(0.0001, cell_size)
+	for i in range(segments.size()):
+		var seg: Dictionary = segments[i]
+		var a3: Vector3 = seg.get("a", Vector3.ZERO)
+		var b3: Vector3 = seg.get("b", Vector3.ZERO)
+		var min_x := minf(a3.x, b3.x) - max_dist
+		var max_x := maxf(a3.x, b3.x) + max_dist
+		var min_z := minf(a3.z, b3.z) - max_dist
+		var max_z := maxf(a3.z, b3.z) + max_dist
+		var min_cx := int(floor(min_x * inv))
+		var max_cx := int(floor(max_x * inv))
+		var min_cz := int(floor(min_z * inv))
+		var max_cz := int(floor(max_z * inv))
+		for cx in range(min_cx, max_cx + 1):
+			for cz in range(min_cz, max_cz + 1):
+				var key := Vector2i(cx, cz)
+				var ids: Array = grid.get(key, [])
+				ids.push_back(i)
+				grid[key] = ids
+	return grid
+
+
+func _sample_nearest_segment_height_2d(
+	point: Vector2,
+	segments: Array,
+	grid: Dictionary,
+	cell_size: float,
+	max_dist: float
+) -> Dictionary:
+	if segments.is_empty() or grid.is_empty():
+		return {"found": false}
+	var inv := 1.0 / maxf(0.0001, cell_size)
+	var base_key := Vector2i(int(floor(point.x * inv)), int(floor(point.y * inv)))
+	var radius_cells := maxi(1, int(ceil(max_dist / maxf(0.0001, cell_size))))
+	var best_d2 := max_dist * max_dist
+	var best_y := 0.0
+	var found := false
+	var seen: Dictionary = {}
+	for cx in range(base_key.x - radius_cells, base_key.x + radius_cells + 1):
+		for cy in range(base_key.y - radius_cells, base_key.y + radius_cells + 1):
+			var key := Vector2i(cx, cy)
+			if not grid.has(key):
+				continue
+			var ids: Array = grid[key]
+			for id_raw in ids:
+				var idx := int(id_raw)
+				if seen.has(idx):
+					continue
+				seen[idx] = true
+				if idx < 0 or idx >= segments.size():
+					continue
+				var seg: Dictionary = segments[idx]
+				var a3: Vector3 = seg.get("a", Vector3.ZERO)
+				var b3: Vector3 = seg.get("b", Vector3.ZERO)
+				var a2 := Vector2(a3.x, a3.z)
+				var b2 := Vector2(b3.x, b3.z)
+				var t := _closest_point_param_on_segment_2d(point, a2, b2)
+				var closest := a2.lerp(b2, t)
+				var d2 := closest.distance_squared_to(point)
+				if d2 > best_d2:
+					continue
+				best_d2 = d2
+				best_y = lerpf(a3.y, b3.y, t)
+				found = true
+	if not found:
+		return {"found": false}
+	return {
+		"found": true,
+		"y": best_y,
+		"dist": sqrt(best_d2),
+	}
+
+
+func _collect_terrain_influence_over_road_loops() -> Array:
+	var out: Array = []
+	for strip_raw in _terrain_influence_strips:
+		var strip: Dictionary = strip_raw
+		if not bool(strip.get("allow_over_road", false)):
+			continue
+		var loop := _compact_polygon2d_xz(strip.get("loop", PackedVector2Array()), 0.001)
+		if loop.size() >= 3:
+			out.push_back(loop)
+	return out
+
+
+func _collect_terrain_influence_over_road_snap_zones() -> Array:
+	var out: Array = []
+	for strip_raw in _terrain_influence_strips:
+		var strip: Dictionary = strip_raw
+		if not bool(strip.get("allow_over_road", false)):
+			continue
+		var loop := _compact_polygon2d_xz(strip.get("loop", PackedVector2Array()), 0.001)
+		if loop.size() < 3:
+			continue
+		var edge_band := maxf(0.0, float(strip.get("over_road_edge_snap_band", 0.0)))
+		if edge_band <= 0.0001:
+			continue
+		out.push_back({
+			"loop": loop,
+			"edge_band": edge_band,
+		})
+	return out
+
+
+func _build_effective_road_clip_parts(road_parts: Array) -> Array:
+	var over_road_loops := _collect_terrain_influence_over_road_loops()
+	if over_road_loops.is_empty():
+		return road_parts
+	var out: Array = []
+	for road_raw in road_parts:
+		var road_part := _compact_polygon2d_xz(road_raw, 0.001)
+		if road_part.size() < 3:
+			continue
+		var remaining: Array = [road_part]
+		for loop_raw in over_road_loops:
+			var loop: PackedVector2Array = loop_raw
+			if loop.size() < 3:
+				continue
+			remaining = _clip_fill_parts_by_polygon(remaining, loop)
+			if remaining.is_empty():
+				break
+		for part_raw in remaining:
+			var part := _compact_polygon2d_xz(part_raw, 0.001)
+			if part.size() >= 3:
+				out.push_back(part)
+	return out
+
+
 func _collect_terrain_influence_seed_boxes() -> Array:
 	var boxes: Array = []
 	for strip_raw in _terrain_influence_strips:
@@ -2546,7 +3047,7 @@ func _collect_terrain_influence_seed_boxes() -> Array:
 			max_x = maxf(max_x, p.x)
 			min_z = minf(min_z, p.z)
 			max_z = maxf(max_z, p.z)
-		var edge := maxf(0.0, float(strip.get("half_width", 0.0)) + float(strip.get("blend", 0.0)))
+		var edge := maxf(0.0, float(strip.get("max_half_width", strip.get("half_width", 0.0))) + float(strip.get("blend", 0.0)))
 		min_x -= edge
 		max_x += edge
 		min_z -= edge
@@ -6297,6 +6798,11 @@ func _build_terrain_influence_strip(
 	var band_count := 4
 	var profile_curve := 1.0
 	var profile_height := 0.0
+	var profile_graph_samples := PackedFloat32Array()
+	var generate_surface := true
+	var allow_over_road := false
+	var clip_base_terrain_by_loop := true
+	var over_road_edge_snap_band := 0.0
 	if path.has_method("get_terrain_influence_width"):
 		width = maxf(0.2, float(path.call("get_terrain_influence_width")))
 	if path.has_method("get_terrain_influence_flatten_blend"):
@@ -6309,13 +6815,30 @@ func _build_terrain_influence_strip(
 		profile_curve = maxf(0.2, float(path.call("get_terrain_influence_profile_curve")))
 	if path.has_method("get_terrain_influence_profile_height"):
 		profile_height = float(path.call("get_terrain_influence_profile_height"))
-	var half_width := width * 0.5
+	if path.has_method("get_terrain_influence_profile_graph_samples"):
+		profile_graph_samples = _to_packed_float32_array(path.call("get_terrain_influence_profile_graph_samples"))
+	if path.has_method("should_generate_terrain_influence_surface"):
+		generate_surface = bool(path.call("should_generate_terrain_influence_surface"))
+	if path.has_method("get_over_road_edge_snap_band"):
+		over_road_edge_snap_band = maxf(0.0, float(path.call("get_over_road_edge_snap_band")))
+	if over_road_edge_snap_band > 0.0001:
+		allow_over_road = true
+	if path.has_method("should_clip_base_terrain_by_influence_loop"):
+		clip_base_terrain_by_loop = bool(path.call("should_clip_base_terrain_by_influence_loop"))
+	else:
+		clip_base_terrain_by_loop = generate_surface
+	var curve_length := maxf(0.001, curve.get_baked_length())
 	var points := PackedVector3Array()
 	points.resize(distances.size())
 	var rights := PackedVector3Array()
 	rights.resize(distances.size())
+	var half_widths := PackedFloat32Array()
+	half_widths.resize(distances.size())
+	var profile_heights := PackedFloat32Array()
+	profile_heights.resize(distances.size())
 	var outer_half := PackedFloat32Array()
 	outer_half.resize(distances.size())
+	var max_half_width := width * 0.5
 	for i in range(distances.size()):
 		var dist := distances[i]
 		var p_local := curve.sample_baked(dist, true)
@@ -6345,8 +6868,28 @@ func _build_terrain_influence_strip(
 		var corner_factor := 0.0
 		if prev_dir.length_squared() > 0.000000000001 and next_dir.length_squared() > 0.000000000001:
 			corner_factor = clampf((1.0 - prev_dir.dot(next_dir)) * 0.5, 0.0, 1.0)
+		var width_at_dist := _resolve_path_component_width(
+			path,
+			dist,
+			curve_length,
+			"get_terrain_influence_width_at_offset",
+			"get_terrain_influence_width_at_ratio",
+			width
+		)
+		var profile_height_at_dist := _resolve_path_component_scalar(
+			path,
+			dist,
+			curve_length,
+			"get_terrain_influence_profile_height_at_offset",
+			"get_terrain_influence_profile_height_at_ratio",
+			profile_height
+		)
+		var local_half_width := maxf(0.1, width_at_dist * 0.5)
 		rights[i] = right
-		outer_half[i] = half_width + blend * corner_factor
+		half_widths[i] = local_half_width
+		profile_heights[i] = profile_height_at_dist
+		max_half_width = maxf(max_half_width, local_half_width)
+		outer_half[i] = local_half_width + blend * corner_factor
 
 	var band_left_edges: Array = []
 	var band_right_edges: Array = []
@@ -6361,7 +6904,8 @@ func _build_terrain_influence_strip(
 		right_edge.resize(points.size())
 		for i in range(points.size()):
 			# Semicircle cross-profile from centerline to outside (half-tube feel).
-			var local_half := half_width + blend * profile_t + (outer_half[i] - half_width) * profile_t
+			var base_half := maxf(0.1, half_widths[i])
+			var local_half := base_half + blend * profile_t + (outer_half[i] - base_half) * profile_t
 			left_edge[i] = points[i] - rights[i] * local_half
 			right_edge[i] = points[i] + rights[i] * local_half
 		var smooth_band := blend * band_t
@@ -6402,11 +6946,19 @@ func _build_terrain_influence_strip(
 		"loop": loop,
 		"outer_vertex_ids": {},
 		"boundary_points": boundary_points,
-		"half_width": half_width,
+		"half_width": max_half_width,
+		"half_widths": half_widths,
+		"max_half_width": max_half_width,
 		"blend": blend,
 		"strength": strength,
 		"profile_curve": profile_curve,
 		"profile_height": profile_height,
+		"profile_heights": profile_heights,
+		"profile_graph_samples": profile_graph_samples,
+		"generate_surface": generate_surface,
+		"allow_over_road": allow_over_road,
+		"over_road_edge_snap_band": over_road_edge_snap_band,
+		"clip_base_terrain_by_loop": clip_base_terrain_by_loop,
 	}
 
 
@@ -6468,8 +7020,19 @@ func _semicircle_profile_t(t: float, curve: float = 1.0) -> float:
 	return sqrt(maxf(0.0, 1.0 - inv * inv))
 
 
-func _terrain_influence_cross_profile(dist_t: float, curve: float) -> float:
+func _terrain_influence_cross_profile(
+	dist_t: float,
+	curve: float,
+	graph_samples: PackedFloat32Array = PackedFloat32Array()
+) -> float:
 	var x := clampf(dist_t, 0.0, 1.0)
+	if graph_samples.size() >= 2:
+		var max_idx := graph_samples.size() - 1
+		var f := x * float(max_idx)
+		var i0 := int(floor(f))
+		var i1 = min(i0 + 1, max_idx)
+		var a := f - float(i0)
+		return clampf(lerpf(float(graph_samples[i0]), float(graph_samples[i1]), a), 0.0, 1.0)
 	if x >= 0.999999:
 		return 0.0
 	var shaped := pow(x, maxf(0.2, curve))
@@ -6496,13 +7059,21 @@ func _append_terrain_influence_fill_faces(
 	verts: PackedVector3Array,
 	normals: PackedVector3Array,
 	uvs: PackedVector2Array,
-	terrain_indices: PackedInt32Array
+	terrain_indices: PackedInt32Array,
+	strips: Array = []
 ) -> void:
-	if _terrain_influence_strips.is_empty():
+	var strips_ref: Array = strips
+	if strips_ref.is_empty():
+		strips_ref = _terrain_influence_strips
+	if strips_ref.is_empty():
 		return
-	for strip_idx in range(_terrain_influence_strips.size()):
-		var strip: Dictionary = _terrain_influence_strips[strip_idx]
+	for strip_idx in range(strips_ref.size()):
+		var strip: Dictionary = strips_ref[strip_idx]
 		var outer_vertex_ids: Dictionary = {}
+		if not bool(strip.get("generate_surface", true)):
+			strip["outer_vertex_ids"] = outer_vertex_ids
+			strips_ref[strip_idx] = strip
+			continue
 		var band_loops_data: Array = strip.get("band_loops_raw", [])
 		if band_loops_data.is_empty():
 			band_loops_data = strip.get("band_loops", [])
@@ -6510,7 +7081,7 @@ func _append_terrain_influence_fill_faces(
 			var fallback_loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
 			_append_terrain_influence_loop_fill(strip, fallback_loop, PackedVector2Array(), verts, normals, uvs, terrain_indices)
 			strip["outer_vertex_ids"] = outer_vertex_ids
-			_terrain_influence_strips[strip_idx] = strip
+			strips_ref[strip_idx] = strip
 			continue
 		# Use the exact clipping loop for the outer ring to avoid T-junction seams.
 		var clip_loop: PackedVector2Array = strip.get("loop", PackedVector2Array())
@@ -6532,7 +7103,7 @@ func _append_terrain_influence_fill_faces(
 					outer_vertex_ids[int(vid_raw)] = true
 		if loops.is_empty():
 			strip["outer_vertex_ids"] = outer_vertex_ids
-			_terrain_influence_strips[strip_idx] = strip
+			strips_ref[strip_idx] = strip
 			continue
 		_append_terrain_influence_loop_triangulation(loops[0], maps[0], terrain_indices)
 		for li in range(1, loops.size()):
@@ -6545,7 +7116,7 @@ func _append_terrain_influence_fill_faces(
 				continue
 			_append_terrain_influence_loop_bridge(inner_map, outer_map, terrain_indices)
 		strip["outer_vertex_ids"] = outer_vertex_ids
-		_terrain_influence_strips[strip_idx] = strip
+		strips_ref[strip_idx] = strip
 
 
 func _append_terrain_influence_loop_vertices(
@@ -6687,27 +7258,45 @@ func _append_terrain_influence_loop_fill(
 
 
 func _sample_terrain_influence_centerline_height(strip: Dictionary, point: Vector2) -> float:
-	var base_y := _sample_terrain_influence_centerline_base_height(strip, point)
-	var points: PackedVector3Array = strip.get("points", PackedVector3Array())
-	if points.size() < 2:
+	var projection := _sample_terrain_influence_projection(strip, point)
+	if not bool(projection.get("valid", false)):
 		return terrain_fill_base_height + y_offset
-	var half_width := maxf(0.0, float(strip.get("half_width", 0.0)))
+	var base_y := float(projection.get("y", terrain_fill_base_height + y_offset))
+	var half_width := maxf(0.0, float(projection.get("half_width", strip.get("half_width", 0.0))))
 	var blend := maxf(0.0, float(strip.get("blend", 0.0)))
 	var max_dist := maxf(0.0001, half_width + blend)
 	var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
-	var profile_height := float(strip.get("profile_height", 0.0))
-	var best_dist := _distance_to_centerline_2d(points, point)
+	var profile_height := float(projection.get("profile_height", strip.get("profile_height", 0.0)))
+	var profile_graph_samples: PackedFloat32Array = strip.get("profile_graph_samples", PackedFloat32Array())
+	var best_dist := float(projection.get("dist", INF))
 	var dist_t := clampf(best_dist / max_dist, 0.0, 1.0)
-	var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve)
+	var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve, profile_graph_samples)
 	return base_y + profile_height * profile_peak
 
 
 func _sample_terrain_influence_centerline_base_height(strip: Dictionary, point: Vector2) -> float:
+	var projection := _sample_terrain_influence_projection(strip, point)
+	return float(projection.get("y", terrain_fill_base_height + y_offset))
+
+
+func _sample_terrain_influence_projection(strip: Dictionary, point: Vector2) -> Dictionary:
 	var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+	var fallback_half := maxf(0.0, float(strip.get("half_width", 0.0)))
+	var fallback_profile_height := float(strip.get("profile_height", 0.0))
 	if points.size() < 2:
-		return terrain_fill_base_height + y_offset
+		return {
+			"valid": false,
+			"dist": INF,
+			"y": terrain_fill_base_height + y_offset,
+			"half_width": fallback_half,
+			"profile_height": fallback_profile_height,
+		}
+	var half_widths: PackedFloat32Array = strip.get("half_widths", PackedFloat32Array())
+	var profile_heights: PackedFloat32Array = strip.get("profile_heights", PackedFloat32Array())
 	var best_dist := INF
 	var best_y := points[0].y
+	var best_half := fallback_half
+	var best_profile_height := fallback_profile_height
 	for i in range(points.size() - 1):
 		var a := points[i]
 		var b := points[i + 1]
@@ -6720,28 +7309,46 @@ func _sample_terrain_influence_centerline_base_height(strip: Dictionary, point: 
 			continue
 		best_dist = d
 		best_y = lerpf(a.y, b.y, t)
-	return best_y
-
-
-func _distance_to_centerline_2d(points: PackedVector3Array, point: Vector2) -> float:
-	if points.size() < 2:
-		return INF
-	var best := INF
-	for i in range(points.size() - 1):
-		var a2 := Vector2(points[i].x, points[i].z)
-		var b2 := Vector2(points[i + 1].x, points[i + 1].z)
-		var t := _closest_point_param_on_segment_2d(point, a2, b2)
-		var c := a2.lerp(b2, t)
-		best = minf(best, point.distance_to(c))
-	return best
+		var half_a := fallback_half
+		var half_b := fallback_half
+		if i < half_widths.size():
+			half_a = maxf(0.0, float(half_widths[i]))
+		if i + 1 < half_widths.size():
+			half_b = maxf(0.0, float(half_widths[i + 1]))
+		best_half = lerpf(half_a, half_b, t)
+		var profile_a := fallback_profile_height
+		var profile_b := fallback_profile_height
+		if i < profile_heights.size():
+			profile_a = float(profile_heights[i])
+		if i + 1 < profile_heights.size():
+			profile_b = float(profile_heights[i + 1])
+		best_profile_height = lerpf(profile_a, profile_b, t)
+	return {
+		"valid": true,
+		"dist": best_dist,
+		"y": best_y,
+		"half_width": best_half,
+		"profile_height": best_profile_height,
+	}
 
 
 func _apply_terrain_influence_strips_to_mesh(
 	verts: PackedVector3Array,
-	terrain_indices: PackedInt32Array
+	terrain_indices: PackedInt32Array,
+	strips: Array = [],
+	over_road_snap_context: Dictionary = {}
 ) -> void:
-	if _terrain_influence_strips.is_empty() or terrain_indices.is_empty():
+	var strips_ref: Array = strips
+	if strips_ref.is_empty():
+		strips_ref = _terrain_influence_strips
+	if strips_ref.is_empty() or terrain_indices.is_empty():
 		return
+	var over_road_zones: Array = over_road_snap_context.get("zones", [])
+	var road_snap_segments: Array = over_road_snap_context.get("segments", [])
+	var road_snap_grid: Dictionary = over_road_snap_context.get("grid", {})
+	var road_snap_cell_size := maxf(0.05, float(over_road_snap_context.get("cell_size", 0.25)))
+	var road_snap_max_dist := maxf(0.05, float(over_road_snap_context.get("max_snap_dist", 0.25)))
+	var can_snap_over_road := not over_road_zones.is_empty() and not road_snap_segments.is_empty() and not road_snap_grid.is_empty()
 	var terrain_vertex_ids: Dictionary = {}
 	for idx_raw in terrain_indices:
 		var idx := int(idx_raw)
@@ -6753,19 +7360,22 @@ func _apply_terrain_influence_strips_to_mesh(
 		var p2 := Vector2(p.x, p.z)
 		var best_weight := 0.0
 		var best_target_y := p.y
-		for strip_raw in _terrain_influence_strips:
+		for strip_raw in strips_ref:
 			var strip: Dictionary = strip_raw
 			var outer_vertex_ids: Dictionary = strip.get("outer_vertex_ids", {})
 			var lock_outer_vertex := bool(outer_vertex_ids.get(vi, false))
 			var points: PackedVector3Array = strip.get("points", PackedVector3Array())
 			if points.size() < 2:
 				continue
-			var half_width := maxf(0.0, float(strip.get("half_width", 0.0)))
+			var half_widths: PackedFloat32Array = strip.get("half_widths", PackedFloat32Array())
+			var max_half_width := maxf(0.0, float(strip.get("max_half_width", strip.get("half_width", 0.0))))
 			var blend := maxf(0.0, float(strip.get("blend", 0.0)))
 			var strength := clampf(float(strip.get("strength", 1.0)), 0.0, 1.0)
 			var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
 			var profile_height := float(strip.get("profile_height", 0.0))
-			var max_dist := half_width + blend
+			var profile_heights: PackedFloat32Array = strip.get("profile_heights", PackedFloat32Array())
+			var profile_graph_samples: PackedFloat32Array = strip.get("profile_graph_samples", PackedFloat32Array())
+			var max_dist := max_half_width + blend
 			if max_dist <= 0.0001 or strength <= 0.0001:
 				continue
 			for i in range(points.size() - 1):
@@ -6776,12 +7386,23 @@ func _apply_terrain_influence_strips_to_mesh(
 				var t := _closest_point_param_on_segment_2d(p2, a2, b2)
 				var closest := a2.lerp(b2, t)
 				var dist := p2.distance_to(closest)
-				if dist > max_dist:
+				var local_half_width := max_half_width
+				if i < half_widths.size():
+					local_half_width = maxf(0.0, float(half_widths[i]))
+				if i + 1 < half_widths.size():
+					local_half_width = lerpf(local_half_width, maxf(0.0, float(half_widths[i + 1])), t)
+				var local_profile_height := profile_height
+				if i < profile_heights.size():
+					local_profile_height = float(profile_heights[i])
+				if i + 1 < profile_heights.size():
+					local_profile_height = lerpf(local_profile_height, float(profile_heights[i + 1]), t)
+				var local_max_dist := local_half_width + blend
+				if local_max_dist <= 0.0001 or dist > local_max_dist:
 					continue
 				var edge_weight := 1.0
-				if blend > 0.0001 and dist > half_width:
-					edge_weight = 1.0 - clampf((dist - half_width) / blend, 0.0, 1.0)
-				elif dist > half_width:
+				if blend > 0.0001 and dist > local_half_width:
+					edge_weight = 1.0 - clampf((dist - local_half_width) / blend, 0.0, 1.0)
+				elif dist > local_half_width:
 					edge_weight = 0.0
 				if edge_weight <= 0.0001:
 					continue
@@ -6790,14 +7411,51 @@ func _apply_terrain_influence_strips_to_mesh(
 				if edge_weight <= best_weight:
 					continue
 				best_weight = edge_weight
-				var dist_t := clampf(dist / max_dist, 0.0, 1.0)
-				var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve)
+				var dist_t := clampf(dist / local_max_dist, 0.0, 1.0)
+				var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve, profile_graph_samples)
 				if lock_outer_vertex:
 					profile_peak = 0.0
-				best_target_y = lerpf(a.y, b.y, t) + profile_height * profile_peak
+				best_target_y = lerpf(a.y, b.y, t) + local_profile_height * profile_peak
 		if best_weight > 0.0001:
 			p.y = lerpf(p.y, best_target_y, best_weight)
-			verts[vi] = p
+		if can_snap_over_road:
+			var zone_match := false
+			for zone_raw in over_road_zones:
+				var zone: Dictionary = zone_raw
+				var loop: PackedVector2Array = zone.get("loop", PackedVector2Array())
+				if loop.size() < 3 or not Geometry2D.is_point_in_polygon(p2, loop):
+					continue
+				var zone_segments: Array = zone.get("edge_segments", [])
+				var zone_grid: Dictionary = zone.get("edge_grid", {})
+				if zone_segments.is_empty() or zone_grid.is_empty():
+					continue
+				var zone_edge_cell_size := maxf(0.01, float(zone.get("edge_cell_size", 0.25)))
+				var zone_edge_band := maxf(0.01, float(zone.get("edge_band", 0.35)))
+				var near_edge := _sample_nearest_segment_height_2d(
+					p2,
+					zone_segments,
+					zone_grid,
+					zone_edge_cell_size,
+					zone_edge_band
+				)
+				if not bool(near_edge.get("found", false)):
+					continue
+				zone_match = true
+				break
+			if not zone_match:
+				verts[vi] = p
+				continue
+			var nearest := _sample_nearest_segment_height_2d(
+				p2,
+				road_snap_segments,
+				road_snap_grid,
+				road_snap_cell_size,
+				road_snap_max_dist
+			)
+			if bool(nearest.get("found", false)):
+				var road_y := float(nearest.get("y", p.y))
+				p.y = road_y
+		verts[vi] = p
 
 
 func _closest_point_param_on_segment_2d(point: Vector2, a: Vector2, b: Vector2) -> float:
@@ -6806,6 +7464,18 @@ func _closest_point_param_on_segment_2d(point: Vector2, a: Vector2, b: Vector2) 
 	if len_sq <= 0.000000000001:
 		return 0.0
 	return clampf((point - a).dot(ab) / len_sq, 0.0, 1.0)
+
+
+func _to_packed_float32_array(value: Variant) -> PackedFloat32Array:
+	if value is PackedFloat32Array:
+		return value as PackedFloat32Array
+	var out := PackedFloat32Array()
+	if value is Array:
+		var source: Array = value
+		out.resize(source.size())
+		for i in range(source.size()):
+			out[i] = float(source[i])
+	return out
 
 
 func _resolve_path_component_width(
@@ -6825,6 +7495,25 @@ func _resolve_path_component_width(
 			ratio = clamp(dist / length, 0.0, 1.0)
 		value = float(path.call(ratio_method, ratio))
 	return maxf(0.0, value)
+
+
+func _resolve_path_component_scalar(
+	path: Path3D,
+	dist: float,
+	length: float,
+	offset_method: String,
+	ratio_method: String,
+	fallback: float
+) -> float:
+	var value := fallback
+	if path != null and path.has_method(offset_method):
+		value = float(path.call(offset_method, dist))
+	elif path != null and path.has_method(ratio_method):
+		var ratio := 0.0
+		if length > 0.0001:
+			ratio = clamp(dist / length, 0.0, 1.0)
+		value = float(path.call(ratio_method, ratio))
+	return value
 
 
 func _sample_curve_up_vector(curve: Curve3D, dist: float) -> Vector3:
@@ -6985,6 +7674,8 @@ func _build_signature() -> String:
 	var parts: Array[String] = []
 	parts.append(str(road_width))
 	parts.append(str(sample_step))
+	parts.append(str(threaded_generation_enabled))
+	parts.append(str(threaded_show_road_preview))
 	parts.append(str(y_offset))
 	parts.append(str(shoulder_left_width))
 	parts.append(str(shoulder_right_width))
@@ -7027,7 +7718,6 @@ func _build_signature() -> String:
 	parts.append(str(terrain_rect_fill_cell_size))
 	parts.append(str(TERRAIN_RECT_FILL_MAX_TRIANGLES))
 	parts.append(str(terrain_rect_fill_road_margin))
-	parts.append(str(terrain_influence_fill_edge_overlap))
 	parts.append("outer")
 	parts.append(str(outer_wall_height))
 	parts.append(str(outer_wall_material_override))
@@ -7053,14 +7743,26 @@ func _build_signature() -> String:
 		parts.append(str(p.global_transform))
 		if _path_is_terrain_influence_only(p):
 			parts.append("terrain_influence_path")
+			if p.has_method("get_terrain_influence_width_profile_signature"):
+				parts.append(str(p.call("get_terrain_influence_width_profile_signature")))
 			if p.has_method("get_terrain_influence_width"):
 				parts.append(str(p.call("get_terrain_influence_width")))
+			if p.has_method("should_generate_terrain_influence_surface"):
+				parts.append(str(p.call("should_generate_terrain_influence_surface")))
+			if p.has_method("should_clip_base_terrain_by_influence_loop"):
+				parts.append(str(p.call("should_clip_base_terrain_by_influence_loop")))
+			if p.has_method("get_over_road_edge_snap_band"):
+				parts.append(str(p.call("get_over_road_edge_snap_band")))
 			if p.has_method("get_terrain_influence_flatten_blend"):
 				parts.append(str(p.call("get_terrain_influence_flatten_blend")))
 			if p.has_method("get_terrain_influence_flatten_strength"):
 				parts.append(str(p.call("get_terrain_influence_flatten_strength")))
 			if p.has_method("get_terrain_influence_band_count"):
 				parts.append(str(p.call("get_terrain_influence_band_count")))
+			if p.has_method("get_terrain_influence_height_profile_signature"):
+				parts.append(str(p.call("get_terrain_influence_height_profile_signature")))
+			if p.has_method("get_terrain_influence_profile_signature"):
+				parts.append(str(p.call("get_terrain_influence_profile_signature")))
 			if p.has_method("get_terrain_influence_profile_curve"):
 				parts.append(str(p.call("get_terrain_influence_profile_curve")))
 			if p.has_method("get_terrain_influence_profile_height"):

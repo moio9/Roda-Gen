@@ -1,5 +1,6 @@
 @tool
 extends Path3D
+class_name TerrainInfluencePath3D
 
 @export_group("Terrain Influence")
 @export_subgroup("Width")

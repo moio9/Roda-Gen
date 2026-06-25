@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="RodaGen"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 
 [editor_plugins]
@@ -25,4 +25,3 @@ enabled=PackedStringArray()
 [rendering]
 
 rendering_device/driver.windows="d3d12"
-mesh_blend/enabled=false

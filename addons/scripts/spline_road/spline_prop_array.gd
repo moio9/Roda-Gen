@@ -1,0 +1,902 @@
+@tool
+extends Node3D
+class_name SplinePropArray3D
+
+@export_group("Sources")
+@export var source_paths: Array[NodePath] = []
+@export var include_terrain_influence_paths := false
+
+@export_group("Content")
+@export var item_scene: PackedScene
+@export var item_mesh: Mesh
+@export var item_material_override: Material
+@export var mesh_cast_shadows := GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+@export_group("Placement")
+@export_enum("Center", "Left Edge", "Right Edge", "Both Edges") var placement_mode := 0
+@export_range(0.1, 200.0, 0.1, "or_greater", "suffix:m") var spacing := 6.0
+@export_range(0.0, 200.0, 0.1, "or_greater", "suffix:m") var start_offset := 0.0
+@export_range(0.0, 200.0, 0.1, "or_greater", "suffix:m") var end_trim := 0.0
+@export_range(0.0, 50.0, 0.1, "or_greater", "suffix:m") var default_lane_width := 6.0
+@export var edge_uses_total_road_width := true
+@export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var lateral_offset := 0.0
+@export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var outward_offset := 0.0
+@export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var vertical_offset := 0.0
+@export_subgroup("Ground Snap")
+@export var snap_to_ground_enabled := false: set = _set_snap_to_ground_enabled
+@export_flags_3d_physics var snap_to_ground_collision_mask := 1
+@export_range(0.0, 89.0, 0.1, "suffix:deg") var snap_to_ground_max_angle_deg := 45.0
+@export_enum("Strict", "Clamp to Last Valid") var snap_to_ground_slope_mode := 0
+@export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var snap_to_ground_y_offset := 0.0
+@export var snap_to_ground_hit_back_faces := true
+@export_range(1.0, 200000.0, 1.0, "or_greater", "suffix:m") var snap_to_ground_raycast_half_height := 5000.0
+@export var snap_to_ground_require_hit := true
+@export var snap_to_ground_collide_with_areas := false
+@export_group("Intersection Avoidance")
+@export var avoid_intersections := true
+@export var avoid_own_path_endpoints := true
+@export var avoid_other_path_endpoints := true
+@export var avoid_intersections_in_center_mode := false
+@export_range(0.0, 100.0, 0.1, "or_greater", "suffix:m") var intersection_clear_radius := 4.0
+@export_group("Distance Ranges")
+@export_enum("Disabled", "Only In Ranges", "Exclude Ranges") var ranges_mode := 0
+@export_enum("Manual Array", "Span Nodes", "Manual + Span Nodes") var range_source_mode := 2
+@export var distance_ranges := PackedVector2Array()
+
+@export_group("Orientation")
+@export var align_with_path := true
+@export var align_with_curve_up := true
+@export_range(0.01, 5.0, 0.01, "or_greater", "suffix:m") var tangent_sample_distance := 0.2
+@export_range(-180.0, 180.0, 0.1, "or_greater", "or_less", "suffix:deg") var yaw_offset_degrees := 0.0
+
+@export_group("Randomization")
+@export var random_seed := 1337
+@export var randomize_seed_each_regenerate := false
+@export_range(0.0, 50.0, 0.01, "or_greater", "suffix:m") var longitudinal_jitter := 0.0
+@export_range(0.0, 50.0, 0.01, "or_greater", "suffix:m") var lateral_jitter := 0.0
+@export_range(0.0, 50.0, 0.01, "or_greater", "suffix:m") var vertical_jitter := 0.0
+@export_range(0.0, 180.0, 0.1, "or_greater", "suffix:deg") var yaw_jitter_degrees := 0.0
+@export_range(0.01, 20.0, 0.01, "or_greater") var random_uniform_scale_min := 1.0
+@export_range(0.01, 20.0, 0.01, "or_greater") var random_uniform_scale_max := 1.0
+
+@export_group("Workflow")
+@export var generate_in_editor := true
+@export var auto_regenerate_in_editor := true
+@export var regenerate_while_dragging_handles := false
+@export var persist_generated_in_scene := false
+@export var use_parent_as_generated_root := false: set = _set_use_parent_as_generated_root
+@export var regenerate_now := false: set = _set_regenerate_now
+@export var clear_generated_now := false: set = _set_clear_generated_now
+@export var debug_logs := false
+
+const GENERATED_ROOT_NAME := "GeneratedSplineProps"
+const GENERATED_OWNER_META := "spline_prop_array_owner_path"
+const PLACEMENT_CENTER := 0
+const PLACEMENT_LEFT := 1
+const PLACEMENT_RIGHT := 2
+const PLACEMENT_BOTH := 3
+const RANGE_SOURCE_MANUAL := 0
+const RANGE_SOURCE_SPANS := 1
+const RANGE_SOURCE_MANUAL_AND_SPANS := 2
+const GROUND_SNAP_SLOPE_STRICT := 0
+const GROUND_SNAP_SLOPE_CLAMP_LAST_VALID := 1
+
+var _last_signature := ""
+var _warned_non_spatial_scene := false
+var _warned_non_node3d_parent := false
+
+
+func _ready() -> void:
+	set_process(true)
+	if _can_generate():
+		regenerate()
+
+
+func _process(_delta: float) -> void:
+	if not Engine.is_editor_hint():
+		return
+	if not auto_regenerate_in_editor:
+		return
+	if not _can_generate():
+		return
+	if _should_defer_editor_regenerate():
+		return
+
+	var sig := _build_signature()
+	if sig == _last_signature:
+		return
+
+	_last_signature = sig
+	regenerate()
+
+
+func _set_regenerate_now(value: bool) -> void:
+	regenerate_now = false
+	if value and _can_generate():
+		regenerate()
+
+
+func _set_use_parent_as_generated_root(value: bool) -> void:
+	use_parent_as_generated_root = value
+	_last_signature = ""
+	if not is_inside_tree():
+		return
+	_clear_all_generated_nodes()
+	if _can_generate():
+		regenerate()
+
+
+func _set_clear_generated_now(value: bool) -> void:
+	clear_generated_now = false
+	if not value:
+		return
+	_clear_all_generated_nodes()
+	_last_signature = ""
+
+
+func _set_snap_to_ground_enabled(value: bool) -> void:
+	snap_to_ground_enabled = value
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+
+
+func _validate_property(property: Dictionary) -> void:
+	if (
+		property.name == "snap_to_ground_collision_mask"
+		or property.name == "snap_to_ground_max_angle_deg"
+		or property.name == "snap_to_ground_slope_mode"
+		or property.name == "snap_to_ground_y_offset"
+		or property.name == "snap_to_ground_hit_back_faces"
+		or property.name == "snap_to_ground_raycast_half_height"
+		or property.name == "snap_to_ground_require_hit"
+		or property.name == "snap_to_ground_collide_with_areas"
+	) and not snap_to_ground_enabled:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+
+
+func regenerate() -> void:
+	if not _can_generate():
+		return
+	if item_scene == null and item_mesh == null:
+		_debug_log("regenerate skipped: set item_scene or item_mesh first.")
+		_clear_all_generated_nodes()
+		return
+
+	var paths := _resolve_paths()
+	if paths.is_empty():
+		_debug_log("regenerate skipped: no valid Path3D sources.")
+		_clear_all_generated_nodes()
+		return
+
+	_clear_all_generated_nodes()
+	var root := _get_generation_parent_root()
+
+	var endpoint_zones := _collect_path_endpoint_zones(paths)
+	var span_ranges_by_path := _collect_span_ranges_by_path(paths)
+	var created_count := 0
+	var rng := _create_rng()
+	for path in paths:
+		created_count += _scatter_path(path, root, rng, endpoint_zones, span_ranges_by_path)
+
+	if created_count <= 0:
+		_debug_log("regenerate done: nothing placed.")
+		_clear_all_generated_nodes()
+	else:
+		_debug_log("regenerate done: placed=%s paths=%s" % [created_count, paths.size()])
+	_last_signature = _build_signature()
+
+
+func _scatter_path(
+	path: Path3D,
+	parent_root: Node3D,
+	rng: RandomNumberGenerator,
+	endpoint_zones: Array,
+	span_ranges_by_path: Dictionary
+) -> int:
+	if path == null or path.curve == null or path.curve.point_count < 2:
+		return 0
+	if _path_is_terrain_influence_only(path) and not include_terrain_influence_paths:
+		return 0
+
+	var curve := path.curve
+	var length := curve.get_baked_length()
+	if length <= 0.001:
+		return 0
+
+	var step := maxf(0.1, spacing)
+	var begin := clampf(maxf(0.0, start_offset), 0.0, length)
+	var end_dist := maxf(begin, length - maxf(0.0, end_trim))
+	if end_dist - begin < 0.001:
+		return 0
+
+	var sides := _build_sides_for_mode()
+	if sides.is_empty():
+		return 0
+
+	var path_to_world := path.global_transform
+	var world_to_parent := parent_root.global_transform.affine_inverse()
+	var dist := begin
+	var loop_guard := 0
+	var created_count := 0
+	var has_last_valid_ground_y_by_side: Dictionary = {}
+
+	while dist <= end_dist + 0.0001 and loop_guard < 200000:
+		loop_guard += 1
+		var d := dist + rng.randf_range(-longitudinal_jitter, longitudinal_jitter)
+		d = clampf(d, begin, end_dist)
+		if not _distance_allowed_by_ranges(path, d, length, span_ranges_by_path):
+			dist += step
+			continue
+		var center := path_to_world * curve.sample_baked(d, true)
+		var tangent := _sample_curve_tangent_world(curve, path_to_world, d, length)
+		var up := _sample_curve_up_world(curve, path_to_world, d)
+		var right := up.cross(tangent).normalized()
+		if right.length() < 0.001:
+			right = Vector3.RIGHT
+
+		for side in sides:
+			var side_offset := _compute_side_offset(path, d, length, side)
+			side_offset += float(side) * outward_offset
+			side_offset += lateral_offset
+			side_offset += rng.randf_range(-lateral_jitter, lateral_jitter)
+
+			var up_offset := vertical_offset + rng.randf_range(-vertical_jitter, vertical_jitter)
+			var world_pos := center + right * side_offset + up * up_offset
+			if snap_to_ground_enabled:
+				var hit := _sample_ground_snap_hit(
+					world_pos,
+					maxi(0, snap_to_ground_collision_mask),
+					clampf(snap_to_ground_max_angle_deg, 0.0, 89.0),
+					snap_to_ground_y_offset,
+					snap_to_ground_hit_back_faces,
+					maxf(1.0, snap_to_ground_raycast_half_height),
+					snap_to_ground_collide_with_areas
+				)
+				var side_key := int(side)
+				var has_last_valid := has_last_valid_ground_y_by_side.has(side_key)
+				var last_valid_y := float(has_last_valid_ground_y_by_side.get(side_key, world_pos.y))
+				if not bool(hit.get("hit", false)):
+					if snap_to_ground_require_hit:
+						continue
+				else:
+					if bool(hit.get("within_max_angle", false)):
+						world_pos.y = float(hit.get("y", world_pos.y))
+						has_last_valid_ground_y_by_side[side_key] = world_pos.y
+					elif int(snap_to_ground_slope_mode) == GROUND_SNAP_SLOPE_CLAMP_LAST_VALID:
+						if has_last_valid:
+							world_pos.y = last_valid_y
+						else:
+							continue
+					else:
+						# Strict mode: discard props on slopes steeper than max angle.
+						continue
+			if _point_blocked_by_intersection_zones(path, world_pos, side, endpoint_zones):
+				continue
+
+			var spawn_node := _instantiate_spawn_node()
+			if spawn_node == null:
+				continue
+
+			var basis := _build_spawn_basis(
+				tangent,
+				up,
+				side,
+				rng
+			)
+			var world_xform := Transform3D(basis, world_pos)
+			spawn_node.transform = world_to_parent * world_xform
+
+			var uniform_scale := _sample_uniform_scale(rng)
+			spawn_node.scale = spawn_node.scale * uniform_scale
+
+			spawn_node.name = "Prop_%s_%06d" % [path.name, created_count]
+			spawn_node.set_meta(GENERATED_OWNER_META, str(get_path()))
+			parent_root.add_child(spawn_node)
+			_assign_generated_owner(spawn_node)
+			created_count += 1
+
+		dist += step
+
+	return created_count
+
+
+func _build_spawn_basis(
+	tangent: Vector3,
+	up: Vector3,
+	_side: int,
+	rng: RandomNumberGenerator
+) -> Basis:
+	var t := tangent.normalized()
+	if t.length() < 0.001:
+		t = Vector3.FORWARD
+
+	var u := up.normalized() if align_with_curve_up else Vector3.UP
+	if u.length() < 0.001:
+		u = Vector3.UP
+
+	var basis := Basis.IDENTITY
+	if align_with_path:
+		var right := u.cross(t).normalized()
+		if right.length() < 0.001:
+			right = Vector3.UP.cross(t).normalized()
+		if right.length() < 0.001:
+			right = Vector3.RIGHT
+		u = t.cross(right).normalized()
+		if u.length() < 0.001:
+			u = Vector3.UP
+		basis = Basis(right, u, -t).orthonormalized()
+
+	var yaw := yaw_offset_degrees
+	yaw += rng.randf_range(-yaw_jitter_degrees, yaw_jitter_degrees)
+	if absf(yaw) > 0.0001:
+		var yaw_axis := u if align_with_curve_up else Vector3.UP
+		if yaw_axis.length() < 0.001:
+			yaw_axis = Vector3.UP
+		basis = Basis(yaw_axis.normalized(), deg_to_rad(yaw)) * basis
+
+	return basis.orthonormalized()
+
+
+func _instantiate_spawn_node() -> Node3D:
+	if item_scene != null:
+		var n := item_scene.instantiate()
+		if n is Node3D:
+			return n as Node3D
+		if not _warned_non_spatial_scene:
+			push_warning("SplinePropArray3D: item_scene root must inherit Node3D.")
+			_warned_non_spatial_scene = true
+		if n != null:
+			n.queue_free()
+		return null
+
+	if item_mesh == null:
+		return null
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = item_mesh
+	mi.material_override = item_material_override
+	mi.cast_shadow = mesh_cast_shadows
+	return mi
+
+
+func _sample_uniform_scale(rng: RandomNumberGenerator) -> float:
+	var min_scale := maxf(0.01, minf(random_uniform_scale_min, random_uniform_scale_max))
+	var max_scale := maxf(min_scale, maxf(random_uniform_scale_min, random_uniform_scale_max))
+	if is_equal_approx(min_scale, max_scale):
+		return min_scale
+	return rng.randf_range(min_scale, max_scale)
+
+
+func _compute_side_offset(path: Path3D, dist: float, length: float, side: int) -> float:
+	if side == 0:
+		return 0.0
+
+	var lane_width := _resolve_path_component_width(
+		path,
+		dist,
+		length,
+		"get_width_at_offset",
+		"get_width_at_ratio",
+		default_lane_width
+	)
+	var lane_half := lane_width * 0.5
+	if not edge_uses_total_road_width:
+		return lane_half * float(side)
+
+	if side < 0:
+		var shoulder_l := _resolve_path_component_width(
+			path,
+			dist,
+			length,
+			"get_shoulder_left_at_offset",
+			"get_shoulder_left_at_ratio",
+			0.0
+		)
+		var sidewalk_l := _resolve_path_component_width(
+			path,
+			dist,
+			length,
+			"get_sidewalk_left_at_offset",
+			"get_sidewalk_left_at_ratio",
+			0.0
+		)
+		return -(lane_half + shoulder_l + sidewalk_l)
+
+	var shoulder_r := _resolve_path_component_width(
+		path,
+		dist,
+		length,
+		"get_shoulder_right_at_offset",
+		"get_shoulder_right_at_ratio",
+		0.0
+	)
+	var sidewalk_r := _resolve_path_component_width(
+		path,
+		dist,
+		length,
+		"get_sidewalk_right_at_offset",
+		"get_sidewalk_right_at_ratio",
+		0.0
+	)
+	return lane_half + shoulder_r + sidewalk_r
+
+
+func _resolve_path_component_width(
+	path: Path3D,
+	dist: float,
+	length: float,
+	offset_method: String,
+	ratio_method: String,
+	fallback: float
+) -> float:
+	var value := maxf(0.0, fallback)
+	if path != null and path.has_method(offset_method):
+		value = float(path.call(offset_method, dist))
+	elif path != null and path.has_method(ratio_method):
+		var ratio := 0.0
+		if length > 0.0001:
+			ratio = clampf(dist / length, 0.0, 1.0)
+			value = float(path.call(ratio_method, ratio))
+	return maxf(0.0, value)
+
+
+func _sample_ground_snap_hit(
+	world_pos: Vector3,
+	collision_mask: int,
+	max_angle_deg: float,
+	y_offset_local: float,
+	hit_back_faces: bool,
+	raycast_half_height: float,
+	collide_with_areas: bool
+) -> Dictionary:
+	if collision_mask == 0:
+		return {}
+	if not is_inside_tree():
+		return {}
+	var world := get_world_3d()
+	if world == null:
+		return {}
+	var state := world.direct_space_state
+	if state == null:
+		return {}
+	var from := world_pos + Vector3.UP * raycast_half_height
+	var to := world_pos + Vector3.DOWN * raycast_half_height
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.collision_mask = collision_mask
+	query.collide_with_bodies = true
+	query.collide_with_areas = collide_with_areas
+	query.hit_back_faces = hit_back_faces
+	var hit: Dictionary = state.intersect_ray(query)
+	if hit.is_empty():
+		return {}
+	var normal: Vector3 = hit.get("normal", Vector3.UP)
+	if normal.length_squared() <= 0.000000000001:
+		normal = Vector3.UP
+	else:
+		normal = normal.normalized()
+	var hit_pos: Vector3 = hit.get("position", world_pos)
+	var angle_deg := rad_to_deg(normal.angle_to(Vector3.UP))
+	return {
+		"hit": true,
+		"within_max_angle": angle_deg <= max_angle_deg + 0.0001,
+		"angle_deg": angle_deg,
+		"y": hit_pos.y + y_offset_local,
+	}
+
+
+func _sample_curve_tangent_world(
+	curve: Curve3D,
+	path_to_world: Transform3D,
+	dist: float,
+	length: float
+) -> Vector3:
+	var delta := maxf(0.01, tangent_sample_distance)
+	var prev_dist := maxf(0.0, dist - delta)
+	var next_dist := minf(length, dist + delta)
+	if is_equal_approx(prev_dist, next_dist):
+		if next_dist < length:
+			next_dist = minf(length, next_dist + delta)
+		elif prev_dist > 0.0:
+			prev_dist = maxf(0.0, prev_dist - delta)
+
+	var prev_point := path_to_world * curve.sample_baked(prev_dist, true)
+	var next_point := path_to_world * curve.sample_baked(next_dist, true)
+	var tangent := (next_point - prev_point).normalized()
+	if tangent.length() < 0.001:
+		tangent = -path_to_world.basis.z.normalized()
+	if tangent.length() < 0.001:
+		tangent = Vector3.FORWARD
+	return tangent
+
+
+func _sample_curve_up_world(curve: Curve3D, path_to_world: Transform3D, dist: float) -> Vector3:
+	if align_with_curve_up and curve != null and curve.has_method("sample_baked_up_vector"):
+		var up_local: Vector3 = curve.sample_baked_up_vector(dist, true)
+		var up_world := (path_to_world.basis * up_local).normalized()
+		if up_world.length() > 0.001:
+			return up_world
+	return Vector3.UP
+
+
+func _build_sides_for_mode() -> Array[int]:
+	match placement_mode:
+		PLACEMENT_CENTER:
+			return [0]
+		PLACEMENT_LEFT:
+			return [-1]
+		PLACEMENT_RIGHT:
+			return [1]
+		PLACEMENT_BOTH:
+			return [-1, 1]
+		_:
+			return [0]
+
+
+func _create_rng() -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	if randomize_seed_each_regenerate:
+		rng.seed = Time.get_ticks_usec()
+	else:
+		var s := random_seed
+		if s == 0:
+			s = 1337
+		rng.seed = int(s)
+	return rng
+
+
+func _collect_path_endpoint_zones(paths: Array[Path3D]) -> Array:
+	var out: Array = []
+	for path in paths:
+		if path == null or path.curve == null or path.curve.point_count < 2:
+			continue
+		var curve := path.curve
+		var length := curve.get_baked_length()
+		if length <= 0.001:
+			continue
+		var path_to_world := path.global_transform
+		var path_id := path.get_instance_id()
+		out.push_back({
+			"path_id": path_id,
+			"position": path_to_world * curve.sample_baked(0.0, true),
+		})
+		out.push_back({
+			"path_id": path_id,
+			"position": path_to_world * curve.sample_baked(length, true),
+		})
+	return out
+
+
+func _point_blocked_by_intersection_zones(
+	path: Path3D,
+	world_pos: Vector3,
+	side: int,
+	endpoint_zones: Array
+) -> bool:
+	if not avoid_intersections:
+		return false
+	if endpoint_zones.is_empty():
+		return false
+	if side == 0 and not avoid_intersections_in_center_mode:
+		return false
+
+	var radius := maxf(0.0, intersection_clear_radius)
+	if radius <= 0.001:
+		return false
+	var radius_sq := radius * radius
+	var path_id := path.get_instance_id() if path != null else -1
+
+	for zone in endpoint_zones:
+		var zone_path_id := int(zone.get("path_id", -1))
+		var same_path := zone_path_id == path_id
+		if same_path and not avoid_own_path_endpoints:
+			continue
+		if not same_path and not avoid_other_path_endpoints:
+			continue
+		var zone_pos: Vector3 = zone.get("position", Vector3.ZERO)
+		if world_pos.distance_squared_to(zone_pos) <= radius_sq:
+			return true
+	return false
+
+
+func _collect_span_ranges_by_path(paths: Array[Path3D]) -> Dictionary:
+	var out: Dictionary = {}
+	for path in paths:
+		if path == null:
+			continue
+		out[path.get_instance_id()] = PackedVector2Array()
+
+	for child in get_children():
+		if child == null:
+			continue
+		if not child.has_method("is_spline_prop_span"):
+			continue
+		if not bool(child.call("is_spline_prop_span")):
+			continue
+		for path in paths:
+			if path == null:
+				continue
+			if not child.has_method("get_range_for_path"):
+				continue
+			var result: Dictionary = child.call("get_range_for_path", path)
+			if not bool(result.get("ok", false)):
+				continue
+			var pair: Vector2 = result.get("range", Vector2.ZERO)
+			var path_id := path.get_instance_id()
+			var arr := PackedVector2Array(out.get(path_id, PackedVector2Array()))
+			arr.push_back(pair)
+			out[path_id] = arr
+
+	return out
+
+
+func _build_effective_ranges(path: Path3D, length: float, span_ranges_by_path: Dictionary) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if range_source_mode == RANGE_SOURCE_MANUAL or range_source_mode == RANGE_SOURCE_MANUAL_AND_SPANS:
+		for pair in distance_ranges:
+			var a := clampf(minf(pair.x, pair.y), 0.0, length)
+			var b := clampf(maxf(pair.x, pair.y), 0.0, length)
+			if b <= a + 0.0001:
+				continue
+			out.push_back(Vector2(a, b))
+
+	if path != null and (range_source_mode == RANGE_SOURCE_SPANS or range_source_mode == RANGE_SOURCE_MANUAL_AND_SPANS):
+		var path_id := path.get_instance_id()
+		var from_spans := PackedVector2Array(span_ranges_by_path.get(path_id, PackedVector2Array()))
+		for pair in from_spans:
+			var a := clampf(minf(pair.x, pair.y), 0.0, length)
+			var b := clampf(maxf(pair.x, pair.y), 0.0, length)
+			if b <= a + 0.0001:
+				continue
+			out.push_back(Vector2(a, b))
+
+	return out
+
+
+func _distance_allowed_by_ranges(
+	path: Path3D,
+	dist: float,
+	length: float,
+	span_ranges_by_path: Dictionary
+) -> bool:
+	if ranges_mode == 0:
+		return true
+	var effective_ranges := _build_effective_ranges(path, length, span_ranges_by_path)
+	if effective_ranges.is_empty():
+		return true
+	var inside := false
+	for pair in effective_ranges:
+		var a := pair.x
+		var b := pair.y
+		if dist >= a and dist <= b:
+			inside = true
+			break
+	if ranges_mode == 1:
+		return inside
+	return not inside
+
+
+func _resolve_paths() -> Array[Path3D]:
+	var out: Array[Path3D] = []
+	var seen: Dictionary = {}
+	for np in source_paths:
+		if np == NodePath():
+			continue
+		var n := get_node_or_null(np)
+		if n is Path3D:
+			_push_unique_path(out, seen, n)
+
+	if out.is_empty():
+		for child in get_children():
+			if child is Path3D:
+				_push_unique_path(out, seen, child)
+
+	if out.is_empty():
+		var parent := get_parent()
+		if parent != null:
+			for sibling in parent.get_children():
+				if sibling is Path3D:
+					_push_unique_path(out, seen, sibling)
+
+	var filtered: Array[Path3D] = []
+	for path in out:
+		if path == null:
+			continue
+		if _path_is_terrain_influence_only(path) and not include_terrain_influence_paths:
+			continue
+		filtered.push_back(path)
+	return filtered
+
+
+func _path_is_terrain_influence_only(path: Path3D) -> bool:
+	if path == null:
+		return false
+	if path.has_method("is_terrain_influence_path"):
+		return bool(path.call("is_terrain_influence_path"))
+	return false
+
+
+func _push_unique_path(out: Array[Path3D], seen: Dictionary, path: Path3D) -> void:
+	if path == null:
+		return
+	var key := str(path.get_instance_id())
+	if seen.has(key):
+		return
+	seen[key] = true
+	out.push_back(path)
+
+
+func _get_generation_parent_root() -> Node3D:
+	if use_parent_as_generated_root:
+		var parent_node := get_parent()
+		if parent_node is Node3D:
+			return parent_node as Node3D
+		if not _warned_non_node3d_parent:
+			push_warning("SplinePropArray3D: parent must inherit Node3D when use_parent_as_generated_root is enabled.")
+			_warned_non_node3d_parent = true
+		return self
+	return _get_or_create_generated_root()
+
+
+func _get_or_create_generated_root() -> Node3D:
+	var root := get_node_or_null(GENERATED_ROOT_NAME) as Node3D
+	if root == null:
+		root = Node3D.new()
+		root.name = GENERATED_ROOT_NAME
+		add_child(root)
+		_assign_generated_owner(root)
+	return root
+
+
+func _clear_all_generated_nodes() -> void:
+	_clear_generated_root()
+	_clear_generated_nodes_in_parent(get_parent())
+	_clear_generated_nodes_in_parent(self)
+
+
+func _clear_generated_root() -> void:
+	var root := get_node_or_null(GENERATED_ROOT_NAME) as Node3D
+	if root == null:
+		return
+	root.free()
+
+
+func _clear_generated_nodes_in_parent(parent: Node) -> void:
+	if parent == null:
+		return
+	for child in parent.get_children():
+		if _is_generated_node_for_this_array(child):
+			child.free()
+
+
+func _is_generated_node_for_this_array(node: Node) -> bool:
+	if node == null:
+		return false
+	if not node.has_meta(GENERATED_OWNER_META):
+		return false
+	return str(node.get_meta(GENERATED_OWNER_META, "")) == str(get_path())
+
+
+func _assign_editor_owner(node: Node) -> void:
+	if not Engine.is_editor_hint():
+		return
+	if node == null:
+		return
+	var edited_root := get_tree().edited_scene_root
+	if edited_root == null:
+		return
+	if not edited_root.is_ancestor_of(node):
+		return
+	node.owner = edited_root
+
+
+func _assign_generated_owner(node: Node) -> void:
+	if not persist_generated_in_scene:
+		return
+	_assign_editor_owner(node)
+
+
+func _can_generate() -> bool:
+	return not Engine.is_editor_hint() or generate_in_editor
+
+
+func _should_defer_editor_regenerate() -> bool:
+	if not Engine.is_editor_hint():
+		return false
+	if regenerate_while_dragging_handles:
+		return false
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+
+func _debug_log(message: String) -> void:
+	if not debug_logs:
+		return
+	print("[SplinePropArray3D] " + message)
+
+
+func _build_signature() -> String:
+	var parts: Array[String] = [
+		str(source_paths.size()),
+		str(include_terrain_influence_paths),
+		str(item_scene),
+		str(item_mesh),
+		str(item_material_override),
+		str(mesh_cast_shadows),
+		str(placement_mode),
+		str(spacing),
+		str(start_offset),
+		str(end_trim),
+		str(default_lane_width),
+		str(edge_uses_total_road_width),
+		str(lateral_offset),
+		str(outward_offset),
+		str(vertical_offset),
+		str(snap_to_ground_enabled),
+		str(snap_to_ground_collision_mask),
+		str(snap_to_ground_max_angle_deg),
+		str(snap_to_ground_slope_mode),
+		str(snap_to_ground_y_offset),
+		str(snap_to_ground_hit_back_faces),
+		str(snap_to_ground_raycast_half_height),
+		str(snap_to_ground_require_hit),
+		str(snap_to_ground_collide_with_areas),
+		str(avoid_intersections),
+		str(avoid_own_path_endpoints),
+		str(avoid_other_path_endpoints),
+		str(avoid_intersections_in_center_mode),
+		str(intersection_clear_radius),
+		str(ranges_mode),
+		str(range_source_mode),
+		str(distance_ranges.size()),
+		str(align_with_path),
+		str(align_with_curve_up),
+		str(tangent_sample_distance),
+		str(yaw_offset_degrees),
+		str(random_seed),
+		str(randomize_seed_each_regenerate),
+		str(longitudinal_jitter),
+		str(lateral_jitter),
+		str(vertical_jitter),
+		str(yaw_jitter_degrees),
+		str(random_uniform_scale_min),
+		str(random_uniform_scale_max),
+		str(persist_generated_in_scene),
+		str(use_parent_as_generated_root),
+		str(regenerate_while_dragging_handles),
+	]
+	for pair in distance_ranges:
+		parts.append(str(pair))
+	for child in get_children():
+		if child == null:
+			continue
+		if not child.has_method("is_spline_prop_span"):
+			continue
+		if not bool(child.call("is_spline_prop_span")):
+			continue
+		parts.append(str(child.get_instance_id()))
+		parts.append(str(child.global_transform))
+		for property_name in ["enabled", "target_path", "start_offset", "end_offset", "snap_handles_to_path", "lateral_offset", "vertical_offset"]:
+			parts.append(str(child.get(property_name)))
+
+	var paths := _resolve_paths()
+	parts.append(str(paths.size()))
+	for path in paths:
+		if path == null:
+			parts.append("null_path")
+			continue
+		parts.append(str(path.get_instance_id()))
+		parts.append(str(path.global_transform))
+		if path.has_method("get_width_profile_signature"):
+			parts.append(str(path.call("get_width_profile_signature")))
+		if path.has_method("get_edge_profile_signature"):
+			parts.append(str(path.call("get_edge_profile_signature")))
+		if path.curve == null:
+			parts.append("null_curve")
+			continue
+		parts.append(str(path.curve.point_count))
+		for i in range(path.curve.point_count):
+			parts.append(str(path.curve.get_point_position(i)))
+			parts.append(str(path.curve.get_point_in(i)))
+			parts.append(str(path.curve.get_point_out(i)))
+			parts.append(str(path.curve.get_point_tilt(i)))
+
+	return "|".join(parts)

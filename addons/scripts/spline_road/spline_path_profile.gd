@@ -1,5 +1,6 @@
 @tool
 extends Path3D
+class_name SplinePathProfile3D
 
 @export_group("Road")
 @export_subgroup("Width")
@@ -12,6 +13,12 @@ extends Path3D
 @export_range(0.0, 15.0, 0.1) var sidewalk_right_width := 0.0
 @export_range(0.0, 2.0, 0.01) var sidewalk_height := 0.12
 @export_range(0.0, 30.0, 0.1) var outer_wall_height := 0.0
+@export_subgroup("Orientation")
+@export var road_orientation_override_enabled := false: set = _set_road_orientation_override_enabled
+@export_enum("Curve Up", "World Up (Y)", "Bank Into Curve") var road_orientation_mode := 0: set = _set_road_orientation_mode
+@export_range(0.0, 45.0, 0.1, "suffix:deg") var road_bank_max_degrees := 8.0
+@export_range(0.0, 4.0, 0.01) var road_bank_strength := 1.0
+@export_range(0.05, 30.0, 0.05, "suffix:m") var road_bank_sample_distance := 3.0
 @export var terrain_override_enabled := false: set = _set_terrain_override_enabled
 @export_range(0.0, 50.0, 0.1) var terrain_left_width := 0.0
 @export_range(0.0, 50.0, 0.1) var terrain_right_width := 0.0
@@ -50,8 +57,13 @@ extends Path3D
 
 const HANDLES_NODE_NAME := "__WidthHandles"
 const HANDLE_META_INDEX := "width_point_index"
+const HANDLE_META_SYNCED_ORIGIN := "width_handle_synced_origin"
+const HANDLE_META_SYNCED_BASIS := "width_handle_synced_basis"
 const MIN_WIDTH := 0.1
-const HANDLE_SCRIPT := preload("res://scripts/spline_road/spline_width_handle.gd")
+const ROAD_ORIENTATION_CURVE_UP := 0
+const ROAD_ORIENTATION_WORLD_UP := 1
+const ROAD_ORIENTATION_BANK_INTO_CURVE := 2
+const HANDLE_SCRIPT: Script = preload("res://addons/scripts/spline_road/spline_width_handle.gd")
 
 var _last_signature := ""
 var _syncing_selected_fields := false
@@ -155,6 +167,20 @@ func _set_intersection_override_enabled(value: bool) -> void:
 	_last_signature = ""
 
 
+func _set_road_orientation_override_enabled(value: bool) -> void:
+	road_orientation_override_enabled = value
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+	_last_signature = ""
+
+
+func _set_road_orientation_mode(value: int) -> void:
+	road_orientation_mode = clampi(value, ROAD_ORIENTATION_CURVE_UP, ROAD_ORIENTATION_BANK_INTO_CURVE)
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+	_last_signature = ""
+
+
 func _set_terrain_override_enabled(value: bool) -> void:
 	terrain_override_enabled = value
 	if Engine.is_editor_hint():
@@ -224,6 +250,22 @@ func _validate_property(property: Dictionary) -> void:
 		or property.name == "selected_point_tilt"
 		or property.name == "selected_point_prev"
 		or property.name == "selected_point_next"
+	):
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
+		property.name == "road_orientation_mode"
+		or property.name == "road_bank_max_degrees"
+		or property.name == "road_bank_strength"
+		or property.name == "road_bank_sample_distance"
+	) and not road_orientation_override_enabled:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
+		property.name == "road_bank_max_degrees"
+		or property.name == "road_bank_strength"
+		or property.name == "road_bank_sample_distance"
+	) and (
+		not road_orientation_override_enabled
+		or road_orientation_mode != ROAD_ORIENTATION_BANK_INTO_CURVE
 	):
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if (
@@ -302,6 +344,36 @@ func get_edge_profile_signature() -> String:
 			str(adaptive_sampling_radius_scale),
 			str(adaptive_sampling_offset),
 		])
+
+
+func get_orientation_profile_signature() -> String:
+	return "|".join([
+		str(road_orientation_override_enabled),
+		str(road_orientation_mode),
+		str(road_bank_max_degrees),
+		str(road_bank_strength),
+		str(road_bank_sample_distance),
+	])
+
+
+func has_orientation_overrides() -> bool:
+	return road_orientation_override_enabled
+
+
+func get_road_orientation_mode() -> int:
+	return clampi(road_orientation_mode, ROAD_ORIENTATION_CURVE_UP, ROAD_ORIENTATION_BANK_INTO_CURVE)
+
+
+func get_road_bank_max_degrees() -> float:
+	return maxf(0.0, road_bank_max_degrees)
+
+
+func get_road_bank_strength() -> float:
+	return maxf(0.0, road_bank_strength)
+
+
+func get_road_bank_sample_distance() -> float:
+	return maxf(0.05, road_bank_sample_distance)
 
 
 func has_intersection_overrides() -> bool:
@@ -588,6 +660,8 @@ func _update_handle_node(handle: MeshInstance3D, index: int, count: int) -> void
 	handle.transform = Transform3D(basis, center)
 	handle.name = "Handle_%03d" % index
 	handle.set_meta(HANDLE_META_INDEX, index)
+	handle.set_meta(HANDLE_META_SYNCED_ORIGIN, center)
+	handle.set_meta(HANDLE_META_SYNCED_BASIS, basis)
 	handle.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	handle.material_override = _get_handle_material(index == selected_point_index)
 	handle.visible = true
@@ -626,15 +700,108 @@ func _compute_point_forward(index: int, count: int) -> Vector3:
 
 func _compute_handle_basis(index: int, count: int) -> Basis:
 	var forward := _compute_point_forward(index, count)
-	var up_ref := Vector3.UP.rotated(forward, _get_point_tilt(index))
+	var mode := _get_preview_orientation_mode()
+	var up := Vector3.UP
 
-	var right := up_ref.cross(forward).normalized()
+	if mode == ROAD_ORIENTATION_CURVE_UP:
+		up = _compute_preview_curve_up(index, count, forward)
+
+	var right := up.cross(forward).normalized()
+	if right.length() < 0.001:
+		right = Vector3.RIGHT
+	up = forward.cross(right).normalized()
+	if up.length() < 0.001:
+		up = Vector3.UP
+
+	if mode == ROAD_ORIENTATION_BANK_INTO_CURVE:
+		var bank_angle := _compute_preview_bank_angle(index, count)
+		if absf(bank_angle) > 0.00001:
+			var bank_roll := Basis(forward, bank_angle)
+			right = (bank_roll * right).normalized()
+			up = (bank_roll * up).normalized()
+
+	var tilt := _get_point_tilt(index)
+	if absf(tilt) > 0.00001:
+		var tilt_roll := Basis(forward, tilt)
+		right = (tilt_roll * right).normalized()
+		up = (tilt_roll * up).normalized()
+
+	return Basis(right, up, forward).orthonormalized()
+
+
+func _get_preview_orientation_mode() -> int:
+	if road_orientation_override_enabled:
+		return clampi(road_orientation_mode, ROAD_ORIENTATION_CURVE_UP, ROAD_ORIENTATION_BANK_INTO_CURVE)
+	return ROAD_ORIENTATION_CURVE_UP
+
+
+func _get_preview_bank_max_radians() -> float:
+	return deg_to_rad(maxf(0.0, road_bank_max_degrees))
+
+
+func _get_preview_bank_strength() -> float:
+	return maxf(0.0, road_bank_strength)
+
+
+func _get_preview_bank_sample_distance() -> float:
+	return maxf(0.05, road_bank_sample_distance)
+
+
+func _estimate_distance_at_point_index(index: int, count: int) -> float:
+	if curve == null or count <= 1:
+		return 0.0
+	var idx := clampi(index, 0, count - 1)
+	var distance := 0.0
+	for i in range(1, idx + 1):
+		distance += curve.get_point_position(i - 1).distance_to(curve.get_point_position(i))
+	return distance
+
+
+func _compute_preview_curve_up(index: int, count: int, forward: Vector3) -> Vector3:
+	if curve != null and curve.has_method("sample_baked_up_vector"):
+		var dist := _estimate_distance_at_point_index(index, count)
+		var up: Vector3 = curve.sample_baked_up_vector(dist, false)
+		if up.length() > 0.001:
+			return up.normalized()
+
+	var fallback_up := Vector3.UP
+	var right := fallback_up.cross(forward).normalized()
 	if right.length() < 0.001:
 		right = Vector3.RIGHT
 	var up := forward.cross(right).normalized()
 	if up.length() < 0.001:
 		up = Vector3.UP
-	return Basis(right, up, forward).orthonormalized()
+	return up
+
+
+func _compute_preview_bank_angle(index: int, count: int) -> float:
+	if curve == null or count < 3:
+		return 0.0
+
+	var prev_idx := maxi(0, index - 1)
+	var next_idx := mini(count - 1, index + 1)
+	if prev_idx == index or next_idx == index:
+		return 0.0
+
+	var prev_pos := curve.get_point_position(prev_idx)
+	var curr_pos := curve.get_point_position(index)
+	var next_pos := curve.get_point_position(next_idx)
+
+	var prev_dir := curr_pos - prev_pos
+	var next_dir := next_pos - curr_pos
+	prev_dir.y = 0.0
+	next_dir.y = 0.0
+	if prev_dir.length_squared() <= 0.000000000001 or next_dir.length_squared() <= 0.000000000001:
+		return 0.0
+
+	prev_dir = prev_dir.normalized()
+	next_dir = next_dir.normalized()
+	var signed_turn := atan2(prev_dir.cross(next_dir).y, prev_dir.dot(next_dir))
+	return clampf(
+		-signed_turn * _get_preview_bank_strength(),
+		-_get_preview_bank_max_radians(),
+		_get_preview_bank_max_radians()
+	)
 
 
 func _apply_selected_handle_transforms_to_curve() -> bool:
@@ -679,7 +846,11 @@ func _apply_selected_handle_transforms_to_curve() -> bool:
 			continue
 
 		var expected := curve.get_point_position(idx) + Vector3.UP * preview_height
+		if handle.has_meta(HANDLE_META_SYNCED_ORIGIN):
+			expected = handle.get_meta(HANDLE_META_SYNCED_ORIGIN)
 		var expected_basis := _compute_handle_basis(idx, count)
+		if handle.has_meta(HANDLE_META_SYNCED_BASIS):
+			expected_basis = handle.get_meta(HANDLE_META_SYNCED_BASIS)
 		var actual := handle.transform.origin
 		var moved := actual.distance_to(expected) > 0.0005
 		if moved:
@@ -771,6 +942,11 @@ func _build_signature() -> String:
 	parts.append(str(sidewalk_right_width))
 	parts.append(str(sidewalk_height))
 	parts.append(str(outer_wall_height))
+	parts.append(str(road_orientation_override_enabled))
+	parts.append(str(road_orientation_mode))
+	parts.append(str(road_bank_max_degrees))
+	parts.append(str(road_bank_strength))
+	parts.append(str(road_bank_sample_distance))
 	parts.append(str(terrain_override_enabled))
 	parts.append(str(terrain_left_width))
 	parts.append(str(terrain_right_width))

@@ -82,7 +82,7 @@ var terrain_fill_outer_padding := 0.0
 @export_range(0.0, 2.0, 0.01, "suffix:s") var editor_regenerate_debounce_seconds := 0.25
 @export var threaded_generation_enabled := true
 @export var threaded_show_road_preview := true
-@export var regenerate_now := false: set = _set_regenerate_now
+@export_tool_button("Regenerate Road") var regenerate_action := _regenerate_from_button
 @export var debug_generation_logs := true
 @export var profile_generation_timings := false
 @export_group("Terrain Influence Debug")
@@ -217,9 +217,8 @@ func _exit_tree() -> void:
 	_join_generation_thread()
 
 
-func _set_regenerate_now(value: bool) -> void:
-	regenerate_now = false
-	if value and _can_generate():
+func _regenerate_from_button() -> void:
+	if _can_generate():
 		_pending_regenerate_signature = ""
 		_pending_regenerate_time_left = 0.0
 		regenerate()

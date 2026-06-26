@@ -54,7 +54,7 @@ func _initialize() -> void:
 	print("mesh_found=", mesh_node != null)
 	print("mesh_tris=", tri_count)
 	print("reject_stats=", builder.get("_triangle_reject_stats"))
-	print("generation_max_points=", builder.get("_generation_max_points"))
+	print("generation_point_budget=", builder.get("_generation_point_budget"))
 	quit()
 
 

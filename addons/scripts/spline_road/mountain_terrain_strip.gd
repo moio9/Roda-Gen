@@ -13,7 +13,7 @@ class_name MountainTerrainStrip3D
 # Usage:
 # 1. Add this node near your road Path3D / SplinePathProfile3D.
 # 2. Set source_path to that Path3D.
-# 3. Press regenerate_now or keep auto_regenerate_in_editor enabled.
+# 3. Press Regenerate Strip or keep auto_regenerate_in_editor enabled.
 # 4. Tune left_profile_* and right_profile_*.
 #
 # Important:
@@ -74,8 +74,8 @@ class_name MountainTerrainStrip3D
 @export_group("Workflow")
 @export var auto_regenerate_in_editor := true
 @export_range(0.0, 2.0, 0.01, "suffix:s") var editor_regenerate_debounce_seconds := 0.25
-@export var regenerate_now := false: set = _set_regenerate_now
-@export var clear_generated_now := false: set = _set_clear_generated_now
+@export_tool_button("Regenerate Strip") var regenerate_action := _regenerate_from_button
+@export_tool_button("Clear Generated") var clear_generated_action := _clear_generated_from_button
 @export var debug_logs := true
 
 const GENERATED_NODE_NAME := "GeneratedMountainTerrainStrip"
@@ -121,18 +121,12 @@ func _process(delta: float) -> void:
 	regenerate()
 
 
-func _set_regenerate_now(value: bool) -> void:
-	regenerate_now = false
-	if not value:
-		return
+func _regenerate_from_button() -> void:
 	_last_signature = ""
 	regenerate()
 
 
-func _set_clear_generated_now(value: bool) -> void:
-	clear_generated_now = false
-	if not value:
-		return
+func _clear_generated_from_button() -> void:
 	_clear_generated()
 	_last_signature = ""
 

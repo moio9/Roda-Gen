@@ -115,8 +115,8 @@ class_name TerrainTopologyBuilder3D
 @export var threaded_triangulation_enabled := true
 @export var auto_regenerate_in_editor := false
 @export_range(0.0, 2.0, 0.01) var editor_regenerate_debounce_seconds := 0.35
-@export var regenerate_now := false: set = _set_regenerate_now
-@export var clear_generated_now := false: set = _set_clear_generated_now
+@export_tool_button("Regenerate Terrain") var regenerate_action := regenerate
+@export_tool_button("Clear Generated") var clear_generated_action := _clear_generated_from_button
 
 @export_group("Debug")
 @export var debug_logs := false
@@ -165,7 +165,7 @@ var _modifier_effect_changed := 0
 var _modifier_effect_total_abs_delta := 0.0
 var _modifier_effect_max_abs_delta := 0.0
 var _triangle_reject_stats := {}
-var _generation_max_points := 0
+var _generation_point_budget := 0
 var _normal_winding_fixes := 0
 var _triangulation_thread: Thread
 var _triangulation_job := {}
@@ -225,18 +225,10 @@ func _process(delta: float) -> void:
 		regenerate()
 
 
-func _set_regenerate_now(value: bool) -> void:
-	regenerate_now = false
-	if value:
-		regenerate()
-
-
-func _set_clear_generated_now(value: bool) -> void:
-	clear_generated_now = false
-	if value:
-		_triangulation_discard_result = _is_generation_thread_active()
-		_mesh_build_state = {}
-		_clear_generated()
+func _clear_generated_from_button() -> void:
+	_triangulation_discard_result = _is_generation_thread_active()
+	_mesh_build_state = {}
+	_clear_generated()
 
 
 func regenerate() -> void:
@@ -276,8 +268,8 @@ func regenerate() -> void:
 	var bounds := _compute_bounds(road_polygons)
 	if expand_bounds_for_modifiers and not _active_height_modifiers.is_empty():
 		bounds = _expand_bounds_for_height_modifiers(bounds, _active_height_modifiers)
-	_generation_max_points = _resolve_generation_point_budget(bounds, road_data)
-	_log("Point budget from sampling: %d" % _generation_max_points)
+	_generation_point_budget = _resolve_generation_point_budget(bounds, road_data)
+	_log("Point budget from sampling: %d" % _generation_point_budget)
 	var points := PackedVector2Array()
 	var point_keys := {}
 	var point_limit := _point_budget_limit()
@@ -853,8 +845,8 @@ func _compute_bounds(road_polygons: Array) -> Rect2:
 
 
 func _point_budget_limit() -> int:
-	if _generation_max_points > 0:
-		return _generation_max_points
+	if _generation_point_budget > 0:
+		return _generation_point_budget
 	return AUTO_POINT_BUDGET_HARD_CAP
 
 
@@ -1921,7 +1913,6 @@ func _build_road_signature() -> String:
 				parts.append("null_curve")
 				continue
 			parts.append(str(path.curve.point_count))
-			parts.append(str(path.curve.get_baked_length()))
 			for i in range(path.curve.point_count):
 				parts.append(str(path.curve.get_point_position(i)))
 				parts.append(str(path.curve.get_point_in(i)))

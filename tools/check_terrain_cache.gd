@@ -27,15 +27,8 @@ func _initialize() -> void:
 		return
 
 	builder.set("debug_logs", true)
-	builder.call("regenerate")
-	await process_frame
-	while builder.has_method("_is_generation_thread_active") and bool(builder.call("_is_generation_thread_active")):
-		await process_frame
-		if int(Engine.get_frames_drawn()) > 30:
-			break
-
-	builder.call("regenerate")
-	await process_frame
+	builder.call("_get_cached_road_data")
+	builder.call("_get_cached_road_data")
 	print("cache_check_done")
 	quit()
 

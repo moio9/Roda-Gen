@@ -65,8 +65,8 @@ class_name SplinePropArray3D
 @export var regenerate_while_dragging_handles := false
 @export var persist_generated_in_scene := false
 @export var use_parent_as_generated_root := false: set = _set_use_parent_as_generated_root
-@export var regenerate_now := false: set = _set_regenerate_now
-@export var clear_generated_now := false: set = _set_clear_generated_now
+@export_tool_button("Regenerate Props") var regenerate_action := _regenerate_from_button
+@export_tool_button("Clear Generated") var clear_generated_action := _clear_generated_from_button
 @export var debug_logs := false
 
 const GENERATED_ROOT_NAME := "GeneratedSplineProps"
@@ -110,9 +110,8 @@ func _process(_delta: float) -> void:
 	regenerate()
 
 
-func _set_regenerate_now(value: bool) -> void:
-	regenerate_now = false
-	if value and _can_generate():
+func _regenerate_from_button() -> void:
+	if _can_generate():
 		regenerate()
 
 
@@ -126,10 +125,7 @@ func _set_use_parent_as_generated_root(value: bool) -> void:
 		regenerate()
 
 
-func _set_clear_generated_now(value: bool) -> void:
-	clear_generated_now = false
-	if not value:
-		return
+func _clear_generated_from_button() -> void:
 	_clear_all_generated_nodes()
 	_last_signature = ""
 

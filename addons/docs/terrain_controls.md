@@ -22,16 +22,15 @@ This is the short guide for the terrain controls that usually matter while tunin
 - `far_grid_step`: spacing far from roads.
 - `near_road_step`: spacing near roads. Smaller values reduce holes and faceting near roads.
 - `near_road_width`: how far the near-road rings extend.
-Detail is driven by the sampling steps below. The builder keeps only an internal hard cap as a safety limit.
-- `auto_point_budget_hard_cap`: maximum budget when auto expansion is enabled.
+- `road_clearance`: minimum terrain offset from the road boundary.
+
+Detail is driven by the sampling steps above. The builder keeps only an internal hard cap as a safety limit.
 
 ### Road Cut
 
-- `add_road_edge_points`: adds points on the road edge.
 - `add_road_boundary_support_points`: adds no-collar support points just outside the road edge. Keep this on when collars are off.
-- `add_near_road_rings`: adds terrain rings outside the road.
-- `filter_triangles_crossing_road_edges`: prevents terrain triangles from crossing over the road.
-- `soft_road_crossing_filter`: advanced. Leave off for strict road cuts.
+
+Road edge points, near-road rings, inside-road filtering, and crossing filtering are internal safeguards now. They stay enabled to keep terrain from crossing over the road.
 
 ### Road Cut / Optional Collar
 
@@ -39,12 +38,9 @@ Detail is driven by the sampling steps below. The builder keeps only an internal
 - `road_edge_collar_lateral_step`: collar subdivision size.
 - `road_edge_collar_max_width`: optional cap for collar width.
 
-### Road Cut / Strictness
+### Road Cut / Fine Tuning
 
-- `strict_no_overlap_near_roads`: rejects more triangles near roads.
-- `reject_any_triangle_vertex_inside_road`: stricter vertex rejection.
-- `triangle_road_clearance`: extra triangle clearance from the road mask.
-- `road_edge_vertex_allowance`: lets edge vertices survive tiny numerical overlap.
+- `road_interior_reject_margin`: extra margin for rejecting triangles inside the road mask. Increase carefully if terrain leaks over the road.
 
 ### Height Profiles
 
@@ -96,7 +92,6 @@ For road-adjacent raised terrain:
 
 - `generate_road_edge_collars = false`
 - `add_road_boundary_support_points = true`
-- `filter_triangles_crossing_road_edges = true`
 - `road_edge_height_blend_distance = 1.0` to `3.0`
 - `protected_road_distance = 3.0`
 - `road_protection_blend_distance = 8.0` to `15.0`

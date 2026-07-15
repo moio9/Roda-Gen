@@ -155,6 +155,9 @@ const REJECT_TRIANGLES_NEAR_ROAD_EDGE := false
 const ROAD_EDGE_REJECT_DISTANCE := 0.06
 const ROAD_EDGE_VERTEX_ALLOWANCE := 0.001
 const AUTO_POINT_BUDGET_HARD_CAP := 180000
+# Keep this aligned with RoadNetworkCreator3D. A wider tangent probe smooths
+# the frame differently from the road mesh and separates the terrain on banks.
+const ROAD_MESH_FRAME_TANGENT_SAMPLE_DISTANCE := 0.1
 
 var _last_signature := ""
 var _pending_time := 0.0
@@ -658,8 +661,14 @@ func _collect_road_data() -> Dictionary:
 				"right_b": b.get("right", Vector3.RIGHT),
 				"wa": float(a.get("width", fallback_road_width)),
 				"wb": float(b.get("width", fallback_road_width)),
-				"half_xz_a": float(a.get("half_xz", fallback_road_width * 0.5)),
-				"half_xz_b": float(b.get("half_xz", fallback_road_width * 0.5)),
+				"left_half_xz_a": float(a.get("left_half_xz", fallback_road_width * 0.5)),
+				"left_half_xz_b": float(b.get("left_half_xz", fallback_road_width * 0.5)),
+				"right_half_xz_a": float(a.get("right_half_xz", fallback_road_width * 0.5)),
+				"right_half_xz_b": float(b.get("right_half_xz", fallback_road_width * 0.5)),
+				"left_surface_raise_a": float(a.get("left_surface_raise", 0.0)),
+				"left_surface_raise_b": float(b.get("left_surface_raise", 0.0)),
+				"right_surface_raise_a": float(a.get("right_surface_raise", 0.0)),
+				"right_surface_raise_b": float(b.get("right_surface_raise", 0.0)),
 				"path_id": path_id,
 			})
 
@@ -718,11 +727,16 @@ func _sample_road_row(path: Path3D, curve: Curve3D, dist: float, length: float, 
 	var p_world := path_transform * p_local
 	var p := builder_inverse * p_world
 
-	var prev_dist := maxf(0.0, dist - maxf(0.05, path_sample_step * 0.5))
-	var next_dist := minf(length, dist + maxf(0.05, path_sample_step * 0.5))
+	# Match RoadNetworkCreator3D's mesh-frame probe exactly. The terrain uses
+	# this frame both for its cut outline and for sampling the road surface Y.
+	var frame_probe := ROAD_MESH_FRAME_TANGENT_SAMPLE_DISTANCE
+	var prev_dist := maxf(0.0, dist - frame_probe)
+	var next_dist := minf(length, dist + frame_probe)
 	if is_equal_approx(prev_dist, next_dist):
-		prev_dist = maxf(0.0, dist - 0.1)
-		next_dist = minf(length, dist + 0.1)
+		if next_dist < length:
+			next_dist = minf(length, next_dist + frame_probe)
+		elif prev_dist > 0.0:
+			prev_dist = maxf(0.0, prev_dist - frame_probe)
 
 	var p_prev := builder_inverse * (path_transform * curve.sample_baked(prev_dist, true))
 	var p_next := builder_inverse * (path_transform * curve.sample_baked(next_dist, true))
@@ -730,9 +744,20 @@ func _sample_road_row(path: Path3D, curve: Curve3D, dist: float, length: float, 
 	var right: Vector3 = frame.get("right", Vector3.RIGHT)
 	var width := _resolve_path_width(path, dist, length)
 	var half := width * 0.5
-	var half_xz := Vector2(right.x, right.z).length() * half
-	var left3 := p - right * half
-	var right3 := p + right * half
+	var shoulder_left := _resolve_path_edge_width(path, dist, length, "get_shoulder_left_at_offset", "get_shoulder_left_at_ratio")
+	var shoulder_right := _resolve_path_edge_width(path, dist, length, "get_shoulder_right_at_offset", "get_shoulder_right_at_ratio")
+	var sidewalk_left := _resolve_path_edge_width(path, dist, length, "get_sidewalk_left_at_offset", "get_sidewalk_left_at_ratio")
+	var sidewalk_right := _resolve_path_edge_width(path, dist, length, "get_sidewalk_right_at_offset", "get_sidewalk_right_at_ratio")
+	var sidewalk_height := _resolve_path_edge_width(path, dist, length, "get_sidewalk_height_at_offset", "get_sidewalk_height_at_ratio")
+	var left_half := half + shoulder_left + sidewalk_left
+	var right_half := half + shoulder_right + sidewalk_right
+	var lateral_xz_scale := Vector2(right.x, right.z).length()
+	var left_surface_raise := sidewalk_height if sidewalk_left > EPS else 0.0
+	var right_surface_raise := sidewalk_height if sidewalk_right > EPS else 0.0
+	var left3 := p - right * left_half
+	left3.y += left_surface_raise
+	var right3 := p + right * right_half
+	right3.y += right_surface_raise
 
 	return {
 		"path_id": path_id,
@@ -743,7 +768,10 @@ func _sample_road_row(path: Path3D, curve: Curve3D, dist: float, length: float, 
 		"left_y": left3.y,
 		"right_edge_y": right3.y,
 		"width": width,
-		"half_xz": half_xz,
+		"left_half_xz": lateral_xz_scale * left_half,
+		"right_half_xz": lateral_xz_scale * right_half,
+		"left_surface_raise": left_surface_raise,
+		"right_surface_raise": right_surface_raise,
 		"right": right,
 		"right2": Vector2(right.x, right.z),
 		"left2": Vector2(left3.x, left3.z),
@@ -761,23 +789,32 @@ func _resolve_road_frame(
 	p_prev: Vector3,
 	p_next: Vector3
 ) -> Dictionary:
+	var world_up := _world_up_in_builder_space()
 	var tangent := p_next - p_prev
 	if road_orientation_mode != 0:
 		tangent.y = 0.0
+	if tangent.length_squared() < 0.000001:
+		tangent = p_next - p
+		if road_orientation_mode != 0:
+			tangent.y = 0.0
+	if tangent.length_squared() < 0.000001:
+		tangent = p - p_prev
+		if road_orientation_mode != 0:
+			tangent.y = 0.0
 	if tangent.length_squared() < 0.000001:
 		tangent = Vector3.FORWARD
 	else:
 		tangent = tangent.normalized()
 
-	var up := Vector3.UP
+	var up := world_up
 	if road_orientation_mode == 0 and curve.has_method("sample_baked_up_vector"):
 		var up_world := path_transform.basis * curve.sample_baked_up_vector(dist, true)
 		up = (builder_inverse.basis * up_world).normalized()
 		if up.length_squared() < 0.000001:
-			up = Vector3.UP
+			up = world_up
 	var right := up.cross(tangent).normalized()
 	if right.length_squared() < 0.000001:
-		right = Vector3.UP.cross(tangent).normalized()
+		right = world_up.cross(tangent).normalized()
 	if right.length_squared() < 0.000001:
 		right = Vector3.RIGHT
 	if road_orientation_mode == 0:
@@ -806,6 +843,13 @@ func _resolve_road_frame(
 	return {"right": right, "up": up}
 
 
+func _world_up_in_builder_space() -> Vector3:
+	var up := global_transform.basis.inverse() * Vector3.UP
+	if up.length_squared() < 0.000001:
+		return Vector3.UP
+	return up.normalized()
+
+
 func _resolve_path_width(path: Path3D, dist: float, length: float) -> float:
 	if path.has_method("get_width_at_offset"):
 		return maxf(0.05, float(path.call("get_width_at_offset", dist)))
@@ -816,6 +860,15 @@ func _resolve_path_width(path: Path3D, dist: float, length: float) -> float:
 	if v != null:
 		return maxf(0.05, float(v))
 	return maxf(0.05, fallback_road_width)
+
+
+func _resolve_path_edge_width(path: Path3D, dist: float, length: float, offset_method: String, ratio_method: String) -> float:
+	if path.has_method(offset_method):
+		return maxf(0.0, float(path.call(offset_method, dist)))
+	if path.has_method(ratio_method):
+		var ratio := 0.0 if length <= 0.001 else clampf(dist / length, 0.0, 1.0)
+		return maxf(0.0, float(path.call(ratio_method, ratio)))
+	return 0.0
 
 
 func _compute_bounds(road_polygons: Array) -> Rect2:
@@ -966,9 +1019,10 @@ func _add_near_road_points_for_row(
 	if right2.length() < 0.001:
 		return
 	right2 = right2.normalized()
-	var half := float(row.get("half_xz", float(row.get("width", fallback_road_width)) * 0.5))
-	var left_p := center2 - right2 * (half + d)
-	var right_p := center2 + right2 * (half + d)
+	var left_half := float(row.get("left_half_xz", float(row.get("width", fallback_road_width)) * 0.5))
+	var right_half := float(row.get("right_half_xz", float(row.get("width", fallback_road_width)) * 0.5))
+	var left_p := center2 - right2 * (left_half + d)
+	var right_p := center2 + right2 * (right_half + d)
 	if not _is_inside_road_mask(left_p, road_segments, road_clearance * 0.5):
 		_add_unique_point(points, point_keys, left_p)
 	if points.size() >= _point_budget_limit():
@@ -1103,7 +1157,10 @@ func _build_road_spatial_index(road_segments: Array, road_polygons: Array) -> vo
 		var segment: Dictionary = road_segments[segment_index]
 		var a: Vector2 = segment.get("a", Vector2.ZERO)
 		var b: Vector2 = segment.get("b", Vector2.ZERO)
-		_road_max_half_width = maxf(_road_max_half_width, maxf(float(segment.get("half_xz_a", fallback_road_width * 0.5)), float(segment.get("half_xz_b", fallback_road_width * 0.5))))
+		_road_max_half_width = maxf(_road_max_half_width, maxf(
+			maxf(float(segment.get("left_half_xz_a", fallback_road_width * 0.5)), float(segment.get("left_half_xz_b", fallback_road_width * 0.5))),
+			maxf(float(segment.get("right_half_xz_a", fallback_road_width * 0.5)), float(segment.get("right_half_xz_b", fallback_road_width * 0.5)))
+		))
 		_index_value_in_rect(_road_spatial_cells, segment_index, Rect2(a, Vector2.ZERO).expand(b))
 
 	for poly in road_polygons:
@@ -1689,9 +1746,9 @@ func _road_edge_distance_for_segment(p: Vector2, segment: Dictionary) -> float:
 	if len2 < 0.000001:
 		return INF
 	var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
-	var center_distance := p.distance_to(a + ab * t)
-	var half_xz := lerpf(float(segment.get("half_xz_a", fallback_road_width * 0.5)), float(segment.get("half_xz_b", fallback_road_width * 0.5)), t)
-	return center_distance - half_xz
+	var center := a + ab * t
+	var side := _road_side_for_segment(segment, p, center)
+	return p.distance_to(center) - _segment_half_xz(segment, t, side)
 
 
 func _nearest_road_info(p: Vector2, road_segments: Array) -> Dictionary:
@@ -1736,20 +1793,16 @@ func _nearest_road_info_spatial(p: Vector2, road_segments: Array) -> Dictionary:
 					var q := a + ab * t
 					var center_dist := p.distance_to(q)
 					var width := lerpf(float(segment.get("wa", fallback_road_width)), float(segment.get("wb", fallback_road_width)), t)
-					var half_xz := lerpf(float(segment.get("half_xz_a", width * 0.5)), float(segment.get("half_xz_b", width * 0.5)), t)
-					var edge_dist := center_dist - half_xz
+					var side := _road_side_for_segment(segment, p, q)
+					var edge_dist := center_dist - _segment_half_xz(segment, t, side)
 					if edge_dist < best:
-						var side := 1
-						var direction: Vector2 = segment.get("direction", ab.normalized())
-						if _cross2(direction, p - q) < 0.0:
-							side = -1
 						best = edge_dist
 						best_info = {
 							"center": q,
 							"center_distance": center_dist,
 							"edge_distance": edge_dist,
 							"side": side,
-							"road_y": _sample_segment_surface_y(segment, p, q, t),
+							"road_y": _sample_segment_surface_y(segment, p, q, t, side),
 							"width": width,
 							"t": t,
 							"path_id": int(segment.get("path_id", -1)),
@@ -1784,21 +1837,16 @@ func _nearest_road_info_linear(p: Vector2, road_segments: Array) -> Dictionary:
 		var q := a + ab * t
 		var center_dist := p.distance_to(q)
 		var width := lerpf(float(seg.get("wa", fallback_road_width)), float(seg.get("wb", fallback_road_width)), t)
-		var half_xz := lerpf(float(seg.get("half_xz_a", width * 0.5)), float(seg.get("half_xz_b", width * 0.5)), t)
-		var edge_dist := center_dist - half_xz
+		var side := _road_side_for_segment(seg, p, q)
+		var edge_dist := center_dist - _segment_half_xz(seg, t, side)
 		if edge_dist < best:
-			var side := 1
-			var direction: Vector2 = seg.get("direction", ab.normalized())
-			var cross := _cross2(direction, p - q)
-			if cross < 0.0:
-				side = -1
 			best = edge_dist
 			best_info = {
 				"center": q,
 				"center_distance": center_dist,
 				"edge_distance": edge_dist,
 				"side": side,
-				"road_y": _sample_segment_surface_y(seg, p, q, t),
+				"road_y": _sample_segment_surface_y(seg, p, q, t, side),
 				"width": width,
 				"t": t,
 				"path_id": int(seg.get("path_id", -1)),
@@ -1806,7 +1854,21 @@ func _nearest_road_info_linear(p: Vector2, road_segments: Array) -> Dictionary:
 	return best_info
 
 
-func _sample_segment_surface_y(segment: Dictionary, point: Vector2, center: Vector2, t: float) -> float:
+func _road_side_for_segment(segment: Dictionary, point: Vector2, center: Vector2) -> int:
+	var direction: Vector2 = segment.get("direction", Vector2.RIGHT)
+	return -1 if _cross2(direction, point - center) < 0.0 else 1
+
+
+func _segment_half_xz(segment: Dictionary, t: float, side: int) -> float:
+	var prefix := "left" if side >= 0 else "right"
+	return lerpf(
+		float(segment.get("%s_half_xz_a" % prefix, fallback_road_width * 0.5)),
+		float(segment.get("%s_half_xz_b" % prefix, fallback_road_width * 0.5)),
+		t
+	)
+
+
+func _sample_segment_surface_y(segment: Dictionary, point: Vector2, center: Vector2, t: float, side: int) -> float:
 	var center_y := lerpf(float(segment.get("ay", base_height)), float(segment.get("by", base_height)), t)
 	var right_a: Vector3 = segment.get("right_a", Vector3.RIGHT)
 	var right_b: Vector3 = segment.get("right_b", Vector3.RIGHT)
@@ -1818,7 +1880,13 @@ func _sample_segment_surface_y(segment: Dictionary, point: Vector2, center: Vect
 	# the 3D lateral road axis. Convert the horizontal projection back to that
 	# axis before applying its Y component.
 	var lateral := (point - center).dot(right_xz.normalized()) / right_xz.length()
-	return center_y + lateral * right.y
+	var prefix := "left" if side >= 0 else "right"
+	var surface_raise := lerpf(
+		float(segment.get("%s_surface_raise_a" % prefix, 0.0)),
+		float(segment.get("%s_surface_raise_b" % prefix, 0.0)),
+		t
+	)
+	return center_y + lateral * right.y + surface_raise
 
 
 func _cross2(a: Vector2, b: Vector2) -> float:
@@ -1920,6 +1988,8 @@ func _build_road_signature() -> String:
 				parts.append(str(path.curve.get_point_tilt(i)))
 			if n.has_method("get_width_profile_signature"):
 				parts.append(str(n.call("get_width_profile_signature")))
+			if n.has_method("get_edge_profile_signature"):
+				parts.append(str(n.call("get_edge_profile_signature")))
 	return "|".join(parts)
 
 

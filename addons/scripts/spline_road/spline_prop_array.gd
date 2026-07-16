@@ -4,6 +4,8 @@ class_name SplinePropArray3D
 
 @export_group("Sources")
 @export var source_paths: Array[NodePath] = []
+## Optional RoadNetworkCreator3D used to match banked road shoulders and sidewalks.
+@export var road_network_source: NodePath
 @export var include_terrain_influence_paths := false
 
 @export_group("Content")
@@ -24,14 +26,11 @@ class_name SplinePropArray3D
 @export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var vertical_offset := 0.0
 @export_subgroup("Ground Snap")
 @export var snap_to_ground_enabled := false: set = _set_snap_to_ground_enabled
-@export_flags_3d_physics var snap_to_ground_collision_mask := 1
+## Optional TerrainTopologyBuilder3D. When empty, the nearest compatible sibling is used.
+@export var terrain_height_source: NodePath
 @export_range(0.0, 89.0, 0.1, "suffix:deg") var snap_to_ground_max_angle_deg := 45.0
 @export_enum("Strict", "Clamp to Last Valid") var snap_to_ground_slope_mode := 0
 @export_range(-50.0, 50.0, 0.1, "or_greater", "or_less", "suffix:m") var snap_to_ground_y_offset := 0.0
-@export var snap_to_ground_hit_back_faces := true
-@export_range(1.0, 200000.0, 1.0, "or_greater", "suffix:m") var snap_to_ground_raycast_half_height := 5000.0
-@export var snap_to_ground_require_hit := true
-@export var snap_to_ground_collide_with_areas := false
 @export_group("Intersection Avoidance")
 @export var avoid_intersections := true
 @export var avoid_own_path_endpoints := true
@@ -39,8 +38,8 @@ class_name SplinePropArray3D
 @export var avoid_intersections_in_center_mode := false
 @export_range(0.0, 100.0, 0.1, "or_greater", "suffix:m") var intersection_clear_radius := 4.0
 @export_group("Distance Ranges")
-@export_enum("Disabled", "Only In Ranges", "Exclude Ranges") var ranges_mode := 0
-@export_enum("Manual Array", "Span Nodes", "Manual + Span Nodes") var range_source_mode := 2
+@export_enum("Disabled", "Only In Ranges", "Exclude Ranges") var ranges_mode := 1
+@export_enum("Manual Array", "Span Nodes", "Manual + Span Nodes") var range_source_mode := 1
 @export var distance_ranges := PackedVector2Array()
 
 @export_group("Orientation")
@@ -71,6 +70,7 @@ class_name SplinePropArray3D
 
 const GENERATED_ROOT_NAME := "GeneratedSplineProps"
 const GENERATED_OWNER_META := "spline_prop_array_owner_path"
+const PROP_SPAN_SCRIPT: Script = preload("res://addons/scripts/spline_road/spline_prop_span.gd")
 const PLACEMENT_CENTER := 0
 const PLACEMENT_LEFT := 1
 const PLACEMENT_RIGHT := 2
@@ -84,12 +84,37 @@ const GROUND_SNAP_SLOPE_CLAMP_LAST_VALID := 1
 var _last_signature := ""
 var _warned_non_spatial_scene := false
 var _warned_non_node3d_parent := false
+var _terrain_height_source_cache: Node
 
 
 func _ready() -> void:
 	set_process(true)
+	_ensure_default_span()
 	if _can_generate():
 		regenerate()
+
+
+func _ensure_default_span() -> void:
+	# A prop array placed directly under a spline is ready to use with one node.
+	var parent_path := get_parent() as Path3D
+	if parent_path == null:
+		return
+	if source_paths.is_empty():
+		source_paths = [NodePath("..")]
+	for child in get_children():
+		if child != null and child.has_method("is_spline_prop_span") and bool(child.call("is_spline_prop_span")):
+			return
+
+	var span := PROP_SPAN_SCRIPT.new() as Node3D
+	if span == null:
+		return
+	span.name = "PropSpan"
+	span.set("target_path", NodePath("../.."))
+	span.set("start_offset", 0.0)
+	if parent_path.curve != null:
+		span.set("end_offset", maxf(0.0, parent_path.curve.get_baked_length()))
+	add_child(span)
+	_assign_editor_owner(span)
 
 
 func _process(_delta: float) -> void:
@@ -138,14 +163,10 @@ func _set_snap_to_ground_enabled(value: bool) -> void:
 
 func _validate_property(property: Dictionary) -> void:
 	if (
-		property.name == "snap_to_ground_collision_mask"
+		property.name == "terrain_height_source"
 		or property.name == "snap_to_ground_max_angle_deg"
 		or property.name == "snap_to_ground_slope_mode"
 		or property.name == "snap_to_ground_y_offset"
-		or property.name == "snap_to_ground_hit_back_faces"
-		or property.name == "snap_to_ground_raycast_half_height"
-		or property.name == "snap_to_ground_require_hit"
-		or property.name == "snap_to_ground_collide_with_areas"
 	) and not snap_to_ground_enabled:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 
@@ -157,6 +178,7 @@ func regenerate() -> void:
 		_debug_log("regenerate skipped: set item_scene or item_mesh first.")
 		_clear_all_generated_nodes()
 		return
+	_terrain_height_source_cache = _resolve_terrain_height_source()
 
 	var paths := _resolve_paths()
 	if paths.is_empty():
@@ -227,6 +249,12 @@ func _scatter_path(
 		var tangent := _sample_curve_tangent_world(curve, path_to_world, d, length)
 		var up := _sample_curve_up_world(curve, path_to_world, d)
 		var right := up.cross(tangent).normalized()
+		var road_frame := _get_road_surface_frame(path, d)
+		if not road_frame.is_empty():
+			center = road_frame.get("center", center)
+			right = road_frame.get("right", right)
+			up = road_frame.get("up", up)
+			tangent = right.cross(up).normalized()
 		if right.length() < 0.001:
 			right = Vector3.RIGHT
 
@@ -239,21 +267,16 @@ func _scatter_path(
 			var up_offset := vertical_offset + rng.randf_range(-vertical_jitter, vertical_jitter)
 			var world_pos := center + right * side_offset + up * up_offset
 			if snap_to_ground_enabled:
-				var hit := _sample_ground_snap_hit(
+				var hit := _sample_terrain_height_hit(
 					world_pos,
-					maxi(0, snap_to_ground_collision_mask),
 					clampf(snap_to_ground_max_angle_deg, 0.0, 89.0),
-					snap_to_ground_y_offset,
-					snap_to_ground_hit_back_faces,
-					maxf(1.0, snap_to_ground_raycast_half_height),
-					snap_to_ground_collide_with_areas
+					snap_to_ground_y_offset
 				)
 				var side_key := int(side)
 				var has_last_valid := has_last_valid_ground_y_by_side.has(side_key)
 				var last_valid_y := float(has_last_valid_ground_y_by_side.get(side_key, world_pos.y))
 				if not bool(hit.get("hit", false)):
-					if snap_to_ground_require_hit:
-						continue
+					continue
 				else:
 					if bool(hit.get("within_max_angle", false)):
 						world_pos.y = float(hit.get("y", world_pos.y))
@@ -294,6 +317,16 @@ func _scatter_path(
 		dist += step
 
 	return created_count
+
+
+func _get_road_surface_frame(path: Path3D, distance: float) -> Dictionary:
+	if road_network_source.is_empty():
+		return {}
+	var road_network := get_node_or_null(road_network_source)
+	if road_network == null or not road_network.has_method("get_path_surface_frame"):
+		return {}
+	var result = road_network.call("get_path_surface_frame", path, distance)
+	return result if result is Dictionary else {}
 
 
 func _build_spawn_basis(
@@ -436,48 +469,45 @@ func _resolve_path_component_width(
 	return maxf(0.0, value)
 
 
-func _sample_ground_snap_hit(
-	world_pos: Vector3,
-	collision_mask: int,
-	max_angle_deg: float,
-	y_offset_local: float,
-	hit_back_faces: bool,
-	raycast_half_height: float,
-	collide_with_areas: bool
-) -> Dictionary:
-	if collision_mask == 0:
+func _sample_terrain_height_hit(world_pos: Vector3, max_angle_deg: float, y_offset_local: float) -> Dictionary:
+	var terrain_source := _get_terrain_height_source()
+	if terrain_source == null or not terrain_source.has_method("get_terrain_height_at_world"):
 		return {}
-	if not is_inside_tree():
+	var result = terrain_source.call("get_terrain_height_at_world", world_pos)
+	if not (result is Dictionary) or not bool(result.get("hit", false)):
 		return {}
-	var world := get_world_3d()
-	if world == null:
-		return {}
-	var state := world.direct_space_state
-	if state == null:
-		return {}
-	var from := world_pos + Vector3.UP * raycast_half_height
-	var to := world_pos + Vector3.DOWN * raycast_half_height
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.collision_mask = collision_mask
-	query.collide_with_bodies = true
-	query.collide_with_areas = collide_with_areas
-	query.hit_back_faces = hit_back_faces
-	var hit: Dictionary = state.intersect_ray(query)
-	if hit.is_empty():
-		return {}
-	var normal: Vector3 = hit.get("normal", Vector3.UP)
+	var normal: Vector3 = result.get("normal", Vector3.UP)
 	if normal.length_squared() <= 0.000000000001:
 		normal = Vector3.UP
 	else:
 		normal = normal.normalized()
-	var hit_pos: Vector3 = hit.get("position", world_pos)
 	var angle_deg := rad_to_deg(normal.angle_to(Vector3.UP))
 	return {
 		"hit": true,
 		"within_max_angle": angle_deg <= max_angle_deg + 0.0001,
 		"angle_deg": angle_deg,
-		"y": hit_pos.y + y_offset_local,
+		"y": float(result.get("y", world_pos.y)) + y_offset_local,
 	}
+
+
+func _get_terrain_height_source() -> Node:
+	if is_instance_valid(_terrain_height_source_cache):
+		return _terrain_height_source_cache
+	_terrain_height_source_cache = _resolve_terrain_height_source()
+	return _terrain_height_source_cache
+
+
+func _resolve_terrain_height_source() -> Node:
+	if not terrain_height_source.is_empty():
+		return get_node_or_null(terrain_height_source)
+	var path_parent := get_parent()
+	var scene_root := path_parent.get_parent() if path_parent != null else null
+	if scene_root == null:
+		return null
+	for sibling in scene_root.get_children():
+		if sibling != null and sibling.has_method("get_terrain_height_at_world"):
+			return sibling
+	return null
 
 
 func _sample_curve_tangent_world(
@@ -821,20 +851,17 @@ func _build_signature() -> String:
 		str(spacing),
 		str(start_offset),
 		str(end_trim),
+		str(road_network_source),
 		str(default_lane_width),
 		str(edge_uses_total_road_width),
 		str(lateral_offset),
 		str(outward_offset),
 		str(vertical_offset),
 		str(snap_to_ground_enabled),
-		str(snap_to_ground_collision_mask),
+		str(terrain_height_source),
 		str(snap_to_ground_max_angle_deg),
 		str(snap_to_ground_slope_mode),
 		str(snap_to_ground_y_offset),
-		str(snap_to_ground_hit_back_faces),
-		str(snap_to_ground_raycast_half_height),
-		str(snap_to_ground_require_hit),
-		str(snap_to_ground_collide_with_areas),
 		str(avoid_intersections),
 		str(avoid_own_path_endpoints),
 		str(avoid_other_path_endpoints),
@@ -861,6 +888,11 @@ func _build_signature() -> String:
 	]
 	for pair in distance_ranges:
 		parts.append(str(pair))
+	var road_network := get_node_or_null(road_network_source)
+	if road_network != null:
+		parts.append(str(road_network.global_transform))
+		for property_name in ["y_offset", "road_orientation_mode", "road_bank_max_degrees", "road_bank_strength", "road_bank_sample_distance"]:
+			parts.append(str(road_network.get(property_name)))
 	for child in get_children():
 		if child == null:
 			continue

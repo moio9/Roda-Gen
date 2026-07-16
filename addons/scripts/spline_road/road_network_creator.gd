@@ -7563,6 +7563,39 @@ func _resolve_path_width(path: Path3D, dist: float, length: float) -> float:
 	return max(0.1, width)
 
 
+## Returns the generated road's world-space frame at a spline distance.
+## Consumers such as SplinePropArray3D use this to sit on banked shoulders/sidewalks.
+func get_path_surface_frame(path: Path3D, distance: float) -> Dictionary:
+	if path == null or path.curve == null or path.curve.point_count < 2:
+		return {}
+	var curve := path.curve
+	var length := maxf(0.0, curve.get_baked_length())
+	if length <= 0.001:
+		return {}
+	var dist := clampf(distance, 0.0, length)
+	var path_to_mesh := global_transform.affine_inverse() * path.global_transform
+	var center_mesh := path_to_mesh * curve.sample_baked(dist, true)
+	var probe := 0.1
+	var prev_dist := maxf(0.0, dist - probe)
+	var next_dist := minf(length, dist + probe)
+	if is_equal_approx(prev_dist, next_dist):
+		if next_dist < length:
+			next_dist = minf(length, next_dist + probe)
+		elif prev_dist > 0.0:
+			prev_dist = maxf(0.0, prev_dist - probe)
+	var prev_mesh := path_to_mesh * curve.sample_baked(prev_dist, true)
+	var next_mesh := path_to_mesh * curve.sample_baked(next_dist, true)
+	var frame := _resolve_road_frame(curve, path_to_mesh, dist, length, center_mesh, prev_mesh, next_mesh)
+	var right_mesh: Vector3 = frame.get("right", Vector3.RIGHT)
+	var up_mesh: Vector3 = frame.get("up", Vector3.UP)
+	center_mesh.y += y_offset
+	return {
+		"center": global_transform * center_mesh,
+		"right": (global_transform.basis * right_mesh).normalized(),
+		"up": (global_transform.basis * up_mesh).normalized(),
+	}
+
+
 func _resolve_path_shoulder_left(path: Path3D, dist: float, length: float) -> float:
 	return _resolve_path_component_width(
 		path,

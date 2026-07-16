@@ -44,8 +44,12 @@ Road edge points, near-road rings, inside-road filtering, and crossing filtering
 
 ### Height Profiles
 
-- `left_profile_distances` / `left_profile_heights`: terrain profile on one side of the road.
-- `right_profile_distances` / `right_profile_heights`: terrain profile on the other side.
+- `Road Network Source`: optional `RoadNetworkCreator3D` fallback for plain `Path3D` sources. It supplies the road width, shoulders and sidewalks when no spline profile exists.
+- `TerrainTopologyBuilder3D` owns the default terrain-height profile used by every road.
+- `SplinePathProfile3D > Terrain Height Profile > Override Enabled` replaces that default for just that spline. Per-spline values always take priority.
+- `left_profile_distances` / `left_profile_heights`: default terrain profile on one side of the road.
+- `right_profile_distances` / `right_profile_heights`: default terrain profile on the other side.
+- Per-spline profile arrays are intentionally empty until enabled; an incomplete override falls back to the builder default.
 - `lock_height_to_road_edge`: keeps terrain height blended back to the road edge.
 - `road_edge_height_blend_distance`: smoother blend away from the road edge. Increase this if terrain walls form beside the road.
 

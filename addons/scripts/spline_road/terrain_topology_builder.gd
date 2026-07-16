@@ -18,7 +18,9 @@ class_name TerrainTopologyBuilder3D
 @export_group("Road Source")
 ## Path3D nodes that define the road centerlines used to cut and height-fit terrain.
 @export var source_paths: Array[NodePath] = []
-## Width used when a source path does not expose its own width profile.
+## RoadNetworkCreator3D used as defaults for plain Path3D sources.
+@export var road_network_source: NodePath
+## Last-resort width when neither a spline profile nor road network defaults exist.
 @export_range(0.2, 80.0, 0.1) var fallback_road_width := 6.0
 ## Base road sampling distance. Lower values follow bends better and cost more.
 @export_range(0.1, 20.0, 0.1) var path_sample_step := 1.5
@@ -669,6 +671,7 @@ func _collect_road_data() -> Dictionary:
 				"left_surface_raise_b": float(b.get("left_surface_raise", 0.0)),
 				"right_surface_raise_a": float(a.get("right_surface_raise", 0.0)),
 				"right_surface_raise_b": float(b.get("right_surface_raise", 0.0)),
+				"terrain_profile": a.get("terrain_profile", _default_terrain_height_profile()),
 				"path_id": path_id,
 			})
 
@@ -742,13 +745,14 @@ func _sample_road_row(path: Path3D, curve: Curve3D, dist: float, length: float, 
 	var p_next := builder_inverse * (path_transform * curve.sample_baked(next_dist, true))
 	var frame := _resolve_road_frame(curve, path_transform, builder_inverse, dist, length, p, p_prev, p_next)
 	var right: Vector3 = frame.get("right", Vector3.RIGHT)
+	var terrain_profile := _resolve_path_terrain_height_profile(path)
 	var width := _resolve_path_width(path, dist, length)
 	var half := width * 0.5
-	var shoulder_left := _resolve_path_edge_width(path, dist, length, "get_shoulder_left_at_offset", "get_shoulder_left_at_ratio")
-	var shoulder_right := _resolve_path_edge_width(path, dist, length, "get_shoulder_right_at_offset", "get_shoulder_right_at_ratio")
-	var sidewalk_left := _resolve_path_edge_width(path, dist, length, "get_sidewalk_left_at_offset", "get_sidewalk_left_at_ratio")
-	var sidewalk_right := _resolve_path_edge_width(path, dist, length, "get_sidewalk_right_at_offset", "get_sidewalk_right_at_ratio")
-	var sidewalk_height := _resolve_path_edge_width(path, dist, length, "get_sidewalk_height_at_offset", "get_sidewalk_height_at_ratio")
+	var shoulder_left := _resolve_path_edge_width(path, dist, length, "get_shoulder_left_at_offset", "get_shoulder_left_at_ratio", "shoulder_left_width")
+	var shoulder_right := _resolve_path_edge_width(path, dist, length, "get_shoulder_right_at_offset", "get_shoulder_right_at_ratio", "shoulder_right_width")
+	var sidewalk_left := _resolve_path_edge_width(path, dist, length, "get_sidewalk_left_at_offset", "get_sidewalk_left_at_ratio", "sidewalk_left_width")
+	var sidewalk_right := _resolve_path_edge_width(path, dist, length, "get_sidewalk_right_at_offset", "get_sidewalk_right_at_ratio", "sidewalk_right_width")
+	var sidewalk_height := _resolve_path_edge_width(path, dist, length, "get_sidewalk_height_at_offset", "get_sidewalk_height_at_ratio", "sidewalk_height")
 	var left_half := half + shoulder_left + sidewalk_left
 	var right_half := half + shoulder_right + sidewalk_right
 	var lateral_xz_scale := Vector2(right.x, right.z).length()
@@ -776,6 +780,7 @@ func _sample_road_row(path: Path3D, curve: Curve3D, dist: float, length: float, 
 		"right2": Vector2(right.x, right.z),
 		"left2": Vector2(left3.x, left3.z),
 		"right_edge2": Vector2(right3.x, right3.z),
+		"terrain_profile": terrain_profile,
 	}
 
 
@@ -856,19 +861,69 @@ func _resolve_path_width(path: Path3D, dist: float, length: float) -> float:
 	if path.has_method("get_width_at_ratio"):
 		var ratio := 0.0 if length <= 0.001 else clampf(dist / length, 0.0, 1.0)
 		return maxf(0.05, float(path.call("get_width_at_ratio", ratio)))
-	var v = path.get("default_width")
-	if v != null:
-		return maxf(0.05, float(v))
-	return maxf(0.05, fallback_road_width)
+	return maxf(0.05, _road_network_default("road_width", fallback_road_width))
 
 
-func _resolve_path_edge_width(path: Path3D, dist: float, length: float, offset_method: String, ratio_method: String) -> float:
+func _resolve_path_edge_width(path: Path3D, dist: float, length: float, offset_method: String, ratio_method: String, road_network_property := "") -> float:
 	if path.has_method(offset_method):
 		return maxf(0.0, float(path.call(offset_method, dist)))
 	if path.has_method(ratio_method):
 		var ratio := 0.0 if length <= 0.001 else clampf(dist / length, 0.0, 1.0)
 		return maxf(0.0, float(path.call(ratio_method, ratio)))
-	return 0.0
+	return maxf(0.0, _road_network_default(road_network_property, 0.0))
+
+
+func _road_network_default(property_name: String, fallback: float) -> float:
+	if property_name.is_empty() or road_network_source.is_empty():
+		return fallback
+	var road_network := get_node_or_null(road_network_source)
+	if road_network == null:
+		return fallback
+	var value = road_network.get(property_name)
+	if value == null:
+		return fallback
+	return float(value)
+
+
+func _default_terrain_height_profile() -> Dictionary:
+	return {
+		"left_distances": left_profile_distances,
+		"left_heights": left_profile_heights,
+		"right_distances": right_profile_distances,
+		"right_heights": right_profile_heights,
+		"to_base_blend_distance": profile_to_base_blend_distance,
+		"power": profile_power,
+	}
+
+
+func _resolve_path_terrain_height_profile(path: Path3D) -> Dictionary:
+	var fallback := _default_terrain_height_profile()
+	if path == null or not path.has_method("has_terrain_height_profile_override"):
+		return fallback
+	if not bool(path.call("has_terrain_height_profile_override")):
+		return fallback
+	if not path.has_method("get_terrain_height_profile_override"):
+		return fallback
+	var profile_raw = path.call("get_terrain_height_profile_override")
+	if not (profile_raw is Dictionary):
+		return fallback
+	var profile: Dictionary = profile_raw
+	var left_distances: PackedFloat32Array = profile.get("left_distances", PackedFloat32Array())
+	var left_heights: PackedFloat32Array = profile.get("left_heights", PackedFloat32Array())
+	var right_distances: PackedFloat32Array = profile.get("right_distances", PackedFloat32Array())
+	var right_heights: PackedFloat32Array = profile.get("right_heights", PackedFloat32Array())
+	if mini(left_distances.size(), left_heights.size()) < 2:
+		return fallback
+	if mini(right_distances.size(), right_heights.size()) < 2:
+		return fallback
+	return {
+		"left_distances": left_distances,
+		"left_heights": left_heights,
+		"right_distances": right_distances,
+		"right_heights": right_heights,
+		"to_base_blend_distance": maxf(0.0, float(profile.get("to_base_blend_distance", profile_to_base_blend_distance))),
+		"power": maxf(0.1, float(profile.get("power", profile_power))),
+	}
 
 
 func _compute_bounds(road_polygons: Array) -> Rect2:
@@ -911,7 +966,7 @@ func _resolve_generation_point_budget(bounds: Rect2, road_data: Dictionary) -> i
 	var near_estimate := 0
 	if ADD_NEAR_ROAD_RINGS and not rows.is_empty():
 		var lateral_step := maxf(0.25, near_road_step)
-		var profile_width := maxf(_profile_max_distance(left_profile_distances), _profile_max_distance(right_profile_distances))
+		var profile_width := _road_data_profile_max_distance(road_data)
 		var max_d := maxf(lateral_step, maxf(near_road_width, profile_width))
 		var min_ring_d := maxf(road_clearance, ROAD_EDGE_REJECT_DISTANCE + POINT_MERGE_EPSILON if REJECT_TRIANGLES_NEAR_ROAD_EDGE else road_clearance)
 		var ring_count := maxi(1, int(floor(maxf(0.0, max_d - min_ring_d) / lateral_step)) + 1)
@@ -927,6 +982,16 @@ func _resolve_generation_point_budget(bounds: Rect2, road_data: Dictionary) -> i
 	var modifier_room := int(ceil(float(required_base) * 0.15))
 	var target := maxi(200, required_base + modifier_room)
 	return mini(target, AUTO_POINT_BUDGET_HARD_CAP)
+
+
+func _road_data_profile_max_distance(road_data: Dictionary) -> float:
+	var max_distance := maxf(_profile_max_distance(left_profile_distances), _profile_max_distance(right_profile_distances))
+	for segment_raw in road_data.get("segments", []):
+		var segment: Dictionary = segment_raw
+		var profile: Dictionary = segment.get("terrain_profile", {})
+		max_distance = maxf(max_distance, _profile_max_distance(profile.get("left_distances", PackedFloat32Array())))
+		max_distance = maxf(max_distance, _profile_max_distance(profile.get("right_distances", PackedFloat32Array())))
+	return max_distance
 
 
 func _add_far_grid_points(points: PackedVector2Array, point_keys: Dictionary, bounds: Rect2, road_segments: Array) -> void:
@@ -975,7 +1040,7 @@ func _add_near_road_points(points: PackedVector2Array, point_keys: Dictionary, r
 	if rows.is_empty():
 		return
 	var lateral_step := maxf(0.25, near_road_step)
-	var profile_width := maxf(_profile_max_distance(left_profile_distances), _profile_max_distance(right_profile_distances))
+	var profile_width := _road_data_profile_max_distance(road_data)
 	var max_d := maxf(lateral_step, maxf(near_road_width, profile_width))
 	var band_distances := PackedFloat32Array()
 	var min_ring_d := maxf(road_clearance, ROAD_EDGE_REJECT_DISTANCE + POINT_MERGE_EPSILON if REJECT_TRIANGLES_NEAR_ROAD_EDGE else road_clearance)
@@ -1427,6 +1492,35 @@ func _sample_height_at_point(p: Vector2, road_segments: Array) -> float:
 	return _sample_height_from_road_info(p, nearest)
 
 
+## Samples the generated terrain function directly, without requiring a physics collider.
+func get_terrain_height_at_world(world_position: Vector3) -> Dictionary:
+	var local_position := to_local(world_position)
+	var road_data := _get_cached_road_data()
+	var road_segments: Array = road_data.get("segments", [])
+	if road_segments.is_empty():
+		return {}
+	var sample_xz := Vector2(local_position.x, local_position.z)
+	var center_y := _sample_height_at_point(sample_xz, road_segments)
+	var normal_local := _sample_terrain_normal_local(sample_xz, road_segments)
+	var normal_world := (global_transform.basis * normal_local).normalized()
+	if normal_world.length_squared() < 0.000001:
+		normal_world = Vector3.UP
+	return {
+		"hit": true,
+		"y": to_global(Vector3(local_position.x, center_y, local_position.z)).y,
+		"normal": normal_world,
+	}
+
+
+func _sample_terrain_normal_local(p: Vector2, road_segments: Array) -> Vector3:
+	var step := maxf(0.1, minf(1.0, near_road_step * 0.25))
+	var left_y := _sample_height_at_point(p - Vector2(step, 0.0), road_segments)
+	var right_y := _sample_height_at_point(p + Vector2(step, 0.0), road_segments)
+	var back_y := _sample_height_at_point(p - Vector2(0.0, step), road_segments)
+	var forward_y := _sample_height_at_point(p + Vector2(0.0, step), road_segments)
+	return Vector3(left_y - right_y, step * 2.0, back_y - forward_y).normalized()
+
+
 func _sample_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
 	if nearest.is_empty():
 		return base_height + _sample_noise(p, 999.0)
@@ -1441,21 +1535,28 @@ func _sample_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
 		var exact_y = _road_edge_y_lookup.get(lk, null)
 		if exact_y != null:
 			road_y = float(exact_y)
+	var profile: Dictionary = nearest.get("terrain_profile", _default_terrain_height_profile())
+	var left_distances: PackedFloat32Array = profile.get("left_distances", left_profile_distances)
+	var left_heights: PackedFloat32Array = profile.get("left_heights", left_profile_heights)
+	var right_distances: PackedFloat32Array = profile.get("right_distances", right_profile_distances)
+	var right_heights: PackedFloat32Array = profile.get("right_heights", right_profile_heights)
+	var profile_power_for_road := maxf(0.1, float(profile.get("power", profile_power)))
+	var profile_blend_distance := maxf(0.0, float(profile.get("to_base_blend_distance", profile_to_base_blend_distance)))
 	var profile_h := 0.0
 	if side >= 0:
-		profile_h = _sample_profile(left_profile_distances, left_profile_heights, edge_d)
+		profile_h = _sample_profile(left_distances, left_heights, edge_d)
 	else:
-		profile_h = _sample_profile(right_profile_distances, right_profile_heights, edge_d)
+		profile_h = _sample_profile(right_distances, right_heights, edge_d)
 
-	if not is_equal_approx(profile_power, 1.0):
+	if not is_equal_approx(profile_power_for_road, 1.0):
 		var sign_v := signf(profile_h)
-		profile_h = sign_v * pow(absf(profile_h), maxf(0.1, profile_power))
+		profile_h = sign_v * pow(absf(profile_h), profile_power_for_road)
 
 	var y := road_y + profile_h
 
-	var max_profile_dist := _profile_max_distance(left_profile_distances if side >= 0 else right_profile_distances)
-	if profile_to_base_blend_distance > 0.001 and edge_d > max_profile_dist:
-		var t := clampf((edge_d - max_profile_dist) / profile_to_base_blend_distance, 0.0, 1.0)
+	var max_profile_dist := _profile_max_distance(left_distances if side >= 0 else right_distances)
+	if profile_blend_distance > 0.001 and edge_d > max_profile_dist:
+		var t := clampf((edge_d - max_profile_dist) / profile_blend_distance, 0.0, 1.0)
 		t = t * t * (3.0 - 2.0 * t)
 		y = lerpf(y, base_height, t)
 
@@ -1806,6 +1907,7 @@ func _nearest_road_info_spatial(p: Vector2, road_segments: Array) -> Dictionary:
 							"width": width,
 							"t": t,
 							"path_id": int(segment.get("path_id", -1)),
+							"terrain_profile": segment.get("terrain_profile", _default_terrain_height_profile()),
 						}
 
 		if best < INF:
@@ -1850,6 +1952,7 @@ func _nearest_road_info_linear(p: Vector2, road_segments: Array) -> Dictionary:
 				"width": width,
 				"t": t,
 				"path_id": int(seg.get("path_id", -1)),
+				"terrain_profile": seg.get("terrain_profile", _default_terrain_height_profile()),
 			}
 	return best_info
 
@@ -1931,6 +2034,8 @@ func _build_signature() -> String:
 	parts.append(str(left_profile_heights))
 	parts.append(str(right_profile_distances))
 	parts.append(str(right_profile_heights))
+	parts.append(str(profile_to_base_blend_distance))
+	parts.append(str(profile_power))
 	parts.append(str(base_height))
 	parts.append(str(lock_height_to_road_edge))
 	parts.append(str(road_edge_height_snap_distance))
@@ -1956,6 +2061,9 @@ func _build_signature() -> String:
 func _build_road_signature() -> String:
 	var parts: Array[String] = []
 	parts.append(str(source_paths))
+	parts.append(str(road_network_source))
+	for property_name in ["road_width", "shoulder_left_width", "shoulder_right_width", "sidewalk_left_width", "sidewalk_right_width", "sidewalk_height"]:
+		parts.append(str(_road_network_default(property_name, -1.0)))
 	parts.append(str(global_transform))
 	parts.append(str(fallback_road_width))
 	parts.append(str(path_sample_step))
@@ -1990,6 +2098,8 @@ func _build_road_signature() -> String:
 				parts.append(str(n.call("get_width_profile_signature")))
 			if n.has_method("get_edge_profile_signature"):
 				parts.append(str(n.call("get_edge_profile_signature")))
+			if n.has_method("get_terrain_height_profile_signature"):
+				parts.append(str(n.call("get_terrain_height_profile_signature")))
 	return "|".join(parts)
 
 

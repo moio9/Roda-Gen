@@ -22,6 +22,15 @@ class_name SplinePathProfile3D
 @export var terrain_override_enabled := false: set = _set_terrain_override_enabled
 @export_range(0.0, 50.0, 0.1) var terrain_left_width := 0.0
 @export_range(0.0, 50.0, 0.1) var terrain_right_width := 0.0
+@export_subgroup("Terrain Height Profile")
+## Replaces TerrainTopologyBuilder3D's default height profile for this spline only.
+@export var terrain_height_profile_override_enabled := false: set = _set_terrain_height_profile_override_enabled
+@export var terrain_left_profile_distances := PackedFloat32Array()
+@export var terrain_left_profile_heights := PackedFloat32Array()
+@export var terrain_right_profile_distances := PackedFloat32Array()
+@export var terrain_right_profile_heights := PackedFloat32Array()
+@export_range(0.0, 200.0, 0.5) var terrain_profile_to_base_blend_distance := 30.0
+@export_range(0.1, 6.0, 0.01) var terrain_profile_power := 1.0
 
 @export_group("Weld")
 @export var intersection_override_enabled := false: set = _set_intersection_override_enabled
@@ -188,6 +197,13 @@ func _set_terrain_override_enabled(value: bool) -> void:
 	_last_signature = ""
 
 
+func _set_terrain_height_profile_override_enabled(value: bool) -> void:
+	terrain_height_profile_override_enabled = value
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+	_last_signature = ""
+
+
 func _set_adaptive_sampling_advanced(value: bool) -> void:
 	adaptive_sampling_advanced = value
 	if Engine.is_editor_hint():
@@ -274,6 +290,15 @@ func _validate_property(property: Dictionary) -> void:
 	) and not terrain_override_enabled:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if (
+		property.name == "terrain_left_profile_distances"
+		or property.name == "terrain_left_profile_heights"
+		or property.name == "terrain_right_profile_distances"
+		or property.name == "terrain_right_profile_heights"
+		or property.name == "terrain_profile_to_base_blend_distance"
+		or property.name == "terrain_profile_power"
+	) and not terrain_height_profile_override_enabled:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
+	if (
 		property.name == "weld_endpoint_snap_distance"
 		or property.name == "weld_allow_endpoint_to_midpath"
 		or property.name == "weld_strip_shoulder_sidewalk_at_intersections"
@@ -344,6 +369,18 @@ func get_edge_profile_signature() -> String:
 			str(adaptive_sampling_radius_scale),
 			str(adaptive_sampling_offset),
 		])
+
+
+func get_terrain_height_profile_signature() -> String:
+	return "|".join([
+		str(terrain_height_profile_override_enabled),
+		str(terrain_left_profile_distances),
+		str(terrain_left_profile_heights),
+		str(terrain_right_profile_distances),
+		str(terrain_right_profile_heights),
+		str(terrain_profile_to_base_blend_distance),
+		str(terrain_profile_power),
+	])
 
 
 func get_orientation_profile_signature() -> String:
@@ -504,6 +541,21 @@ func get_terrain_right_at_offset(_offset: float) -> float:
 
 func get_terrain_right_at_ratio(_ratio: float) -> float:
 	return maxf(0.0, terrain_right_width)
+
+
+func has_terrain_height_profile_override() -> bool:
+	return terrain_height_profile_override_enabled
+
+
+func get_terrain_height_profile_override() -> Dictionary:
+	return {
+		"left_distances": terrain_left_profile_distances,
+		"left_heights": terrain_left_profile_heights,
+		"right_distances": terrain_right_profile_distances,
+		"right_heights": terrain_right_profile_heights,
+		"to_base_blend_distance": maxf(0.0, terrain_profile_to_base_blend_distance),
+		"power": maxf(0.1, terrain_profile_power),
+	}
 
 
 func _point_count() -> int:
@@ -950,6 +1002,13 @@ func _build_signature() -> String:
 	parts.append(str(terrain_override_enabled))
 	parts.append(str(terrain_left_width))
 	parts.append(str(terrain_right_width))
+	parts.append(str(terrain_height_profile_override_enabled))
+	parts.append(str(terrain_left_profile_distances))
+	parts.append(str(terrain_left_profile_heights))
+	parts.append(str(terrain_right_profile_distances))
+	parts.append(str(terrain_right_profile_heights))
+	parts.append(str(terrain_profile_to_base_blend_distance))
+	parts.append(str(terrain_profile_power))
 	parts.append(str(intersection_override_enabled))
 	parts.append(str(weld_endpoint_snap_distance))
 	parts.append(str(weld_allow_endpoint_to_midpath))

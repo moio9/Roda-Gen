@@ -299,9 +299,13 @@ func _get_road_edges(path: Path3D, dist: float, length: float) -> Vector2:
 		if path.has_method("get_sidewalk_right_at_offset"):
 			sidewalk_right = maxf(0.0, float(path.call("get_sidewalk_right_at_offset", dist)))
 
-	var half := maxf(0.05, width * 0.5)
-	var left_edge := half + shoulder_left + sidewalk_left + maxf(0.0, road_edge_clearance)
-	var right_edge := half + shoulder_right + sidewalk_right + maxf(0.0, road_edge_clearance)
+	var lane_extents := Vector2(width * 0.5, width * 0.5)
+	if use_source_width_profile and path.has_method("get_lane_extents_at_offset"):
+		var raw_extents: Variant = path.call("get_lane_extents_at_offset", dist)
+		if raw_extents is Vector2:
+			lane_extents = raw_extents
+	var left_edge := maxf(0.05, lane_extents.x) + shoulder_left + sidewalk_left + maxf(0.0, road_edge_clearance)
+	var right_edge := maxf(0.05, lane_extents.y) + shoulder_right + sidewalk_right + maxf(0.0, road_edge_clearance)
 	return Vector2(left_edge, right_edge)
 
 
@@ -578,7 +582,9 @@ func _build_signature() -> String:
 				parts.append(str(path.curve.get_point_in(i)))
 				parts.append(str(path.curve.get_point_out(i)))
 				parts.append(str(path.curve.get_point_tilt(i)))
-		if path.has_method("get_width_profile_signature"):
+		if path.has_method("get_dependent_width_profile_signature"):
+			parts.append(str(path.call("get_dependent_width_profile_signature")))
+		elif path.has_method("get_width_profile_signature"):
 			parts.append(str(path.call("get_width_profile_signature")))
 		if path.has_method("get_edge_profile_signature"):
 			parts.append(str(path.call("get_edge_profile_signature")))

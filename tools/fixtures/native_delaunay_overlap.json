@@ -1,0 +1,7 @@
+{
+  "description": "Seven-point reduction of the ten-road TerrainTopologyBuilder native overlap; original insertion order and float32 coordinates are preserved.",
+  "godot_build": "4.7.2.stable.custom_build.ef0572a9d",
+  "points_variant_hex": "2300000007000000edd417c2c1feebc1132b00c23f01f4c1d563ffc1422af4c11f10d0c1c02cfcc1202346447fba5242000088c1000084c2000088c1000058c2",
+  "observed_probe_overlap_area": 63.2192077636719,
+  "observed_max_overlap_area": 672.025146484375
+}

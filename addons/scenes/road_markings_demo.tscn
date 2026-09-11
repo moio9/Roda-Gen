@@ -1,0 +1,73 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="../scripts/spline_road/road_network_creator.gd" id="1_road"]
+[ext_resource type="Script" path="../scripts/spline_road/spline_path_profile.gd" id="2_profile"]
+
+[sub_resource type="StandardMaterial3D" id="Material_asphalt"]
+albedo_color = Color(0.055, 0.065, 0.08, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="Material_shoulder"]
+albedo_color = Color(0.35, 0.28, 0.19, 1)
+roughness = 1.0
+
+[sub_resource type="Curve3D" id="Curve_route"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 1, 20, 0, 0, 0, -12, -1, -18, 12, 1, 18, 0, 3, 60, -14, 0, -18, 14, 0, 18, 45, 6, 105, -10, 1, -20, 0, 0, 0, 85, 3, 160),
+"tilts": PackedFloat32Array(0, 0.25, -0.18, 0)
+}
+point_count = 4
+
+[sub_resource type="Curve" id="Curve_transition"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Environment" id="Environment_demo"]
+background_mode = 1
+background_color = Color(0.035, 0.045, 0.065, 1)
+ambient_light_source = 3
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.65
+
+[node name="RoadMarkingsDemo" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_demo")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.95, -0.35, 0)
+
+[node name="Camera" type="Camera3D" parent="."]
+position = Vector3(160, 170, 0)
+rotation = Vector3(-0.859, 2.1588, 0)
+current = true
+fov = 55.0
+far = 1000.0
+
+[node name="Road" type="Node3D" parent="."]
+script = ExtResource("1_road")
+road_material_override = SubResource("Material_asphalt")
+shoulder_material_override = SubResource("Material_shoulder")
+sample_step = 1.0
+invert_faces = true
+adaptive_sampling_enabled = false
+markings_enabled = true
+markings_center_style = 3
+markings_dash_length = 3.0
+markings_dash_gap = 4.0
+markings_hatch_spacing = 2.5
+debug_generation_logs = false
+threaded_generation_enabled = false
+
+[node name="Route" type="Path3D" parent="Road"]
+curve = SubResource("Curve_route")
+script = ExtResource("2_profile")
+lane_profile_enabled = true
+point_lanes_left = PackedInt32Array(1, 1, 1, 1)
+point_lanes_right = PackedInt32Array(1, 2, 2, 1)
+point_lane_widths = PackedFloat32Array(3.5, 3.5, 3.5, 3.5)
+point_lane_transition_lengths = PackedFloat32Array(0, 40, 0, 35)
+point_lane_transition_curves = Array[Curve]([null, SubResource("Curve_transition"), null, SubResource("Curve_transition")])
+shoulder_left_width = 0.7
+shoulder_right_width = 0.7
+show_width_preview = false

@@ -14,6 +14,13 @@ class_name SplinePropArray3D
 @export var item_material_override: Material
 @export var mesh_cast_shadows := GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
+@export_group("Rendering")
+## Individual nodes can use Forward+ automatic instancing when mesh and material are shared.
+## MultiMesh batches Item Mesh only. Item Scene keeps its nodes, scripts and collisions.
+@export_enum("Individual Nodes", "MultiMesh (Item Mesh Only)") var render_mode := 0: set = _set_render_mode
+## World-space cell size for MultiMesh visibility culling. Smaller cells create more batches.
+@export_range(1.0, 1000.0, 1.0, "or_greater", "suffix:m") var multimesh_chunk_size := 100.0
+
 @export_group("Placement")
 @export_enum("Center", "Left Edge", "Right Edge", "Both Edges") var placement_mode := 0
 @export_range(0.1, 200.0, 0.1, "or_greater", "suffix:m") var spacing := 6.0
@@ -70,7 +77,9 @@ class_name SplinePropArray3D
 
 const GENERATED_ROOT_NAME := "GeneratedSplineProps"
 const GENERATED_OWNER_META := "spline_prop_array_owner_path"
-const PROP_SPAN_SCRIPT: Script = preload("res://addons/scripts/spline_road/spline_prop_span.gd")
+# Keep this relative to the addon script, so the addon may be installed under
+# any directory name in a host project.
+const PROP_SPAN_SCRIPT: Script = preload("./spline_prop_span.gd")
 const PLACEMENT_CENTER := 0
 const PLACEMENT_LEFT := 1
 const PLACEMENT_RIGHT := 2
@@ -80,11 +89,25 @@ const RANGE_SOURCE_SPANS := 1
 const RANGE_SOURCE_MANUAL_AND_SPANS := 2
 const GROUND_SNAP_SLOPE_STRICT := 0
 const GROUND_SNAP_SLOPE_CLAMP_LAST_VALID := 1
+const RENDER_MULTIMESH := 1
 
 var _last_signature := ""
 var _warned_non_spatial_scene := false
 var _warned_non_node3d_parent := false
 var _terrain_height_source_cache: Node
+var _terrain_regeneration_pending := false
+var _connected_terrain_source: Node
+var _placement_cache := preload("./prop_placement_cache.gd").new()
+var _output_cache := preload("./prop_output_cache.gd").new()
+
+
+## Source placement and native mesh output reuse. Idle built-in terrain can be
+## revalidated; Item Scene and unknown ground providers keep their lifecycle.
+func get_placement_rebuild_stats() -> Dictionary:
+	var result: Dictionary = _placement_cache.stats.duplicate(true)
+	result.merge(_output_cache.stats)
+	result["pending_terrain"] = _terrain_regeneration_pending
+	return result
 
 
 func _ready() -> void:
@@ -118,6 +141,14 @@ func _ensure_default_span() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _terrain_regeneration_pending:
+		if not _can_generate():
+			return
+		var provider := _resolve_terrain_height_source()
+		if snap_to_ground_enabled and _terrain_source_pending(provider):
+			return
+		regenerate()
+		return
 	if not Engine.is_editor_hint():
 		return
 	if not auto_regenerate_in_editor:
@@ -145,14 +176,18 @@ func _set_use_parent_as_generated_root(value: bool) -> void:
 	_last_signature = ""
 	if not is_inside_tree():
 		return
-	_clear_all_generated_nodes()
 	if _can_generate():
 		regenerate()
+	else:
+		_clear_all_generated_nodes()
 
 
 func _clear_generated_from_button() -> void:
+	_terrain_regeneration_pending = false
+	_bind_terrain_source(null)
 	_clear_all_generated_nodes()
-	_last_signature = ""
+	_placement_cache.clear()
+	_last_signature = _build_signature()
 
 
 func _set_snap_to_ground_enabled(value: bool) -> void:
@@ -161,7 +196,24 @@ func _set_snap_to_ground_enabled(value: bool) -> void:
 		notify_property_list_changed()
 
 
+func _set_render_mode(value: int) -> void:
+	render_mode = value
+	if Engine.is_editor_hint():
+		notify_property_list_changed()
+		update_configuration_warnings()
+
+
+func _get_configuration_warnings() -> PackedStringArray:
+	if render_mode == RENDER_MULTIMESH and item_scene != null:
+		return PackedStringArray([
+			"MultiMesh applies to Item Mesh only. Item Scene takes priority and is generated as individual nodes. Clear Item Scene and assign Item Mesh to use MultiMesh.",
+		])
+	return PackedStringArray()
+
+
 func _validate_property(property: Dictionary) -> void:
+	if property.name == "multimesh_chunk_size" and render_mode != RENDER_MULTIMESH:
+		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if (
 		property.name == "terrain_height_source"
 		or property.name == "snap_to_ground_max_angle_deg"
@@ -174,20 +226,33 @@ func _validate_property(property: Dictionary) -> void:
 func regenerate() -> void:
 	if not _can_generate():
 		return
+	_terrain_regeneration_pending = false
+	if Engine.is_editor_hint():
+		update_configuration_warnings()
 	if item_scene == null and item_mesh == null:
+		_bind_terrain_source(null)
 		_debug_log("regenerate skipped: set item_scene or item_mesh first.")
 		_clear_all_generated_nodes()
+		_placement_cache.clear()
 		return
 	_terrain_height_source_cache = _resolve_terrain_height_source()
+	_bind_terrain_source(_terrain_height_source_cache if snap_to_ground_enabled else null)
 
 	var paths := _resolve_paths()
 	if paths.is_empty():
+		_bind_terrain_source(null)
 		_debug_log("regenerate skipped: no valid Path3D sources.")
 		_clear_all_generated_nodes()
+		_placement_cache.clear()
 		return
 
-	_clear_all_generated_nodes()
-	var root := _get_generation_parent_root()
+	if snap_to_ground_enabled and _terrain_source_pending(_terrain_height_source_cache):
+		# Preserve existing nodes, scene lifecycles, batches and RNG while the
+		# provider is unavailable. Retry the latest requested configuration on idle.
+		_terrain_regeneration_pending = true
+		return
+	_placement_cache.begin_build(self)
+	var root: Node3D = _output_cache.begin_build(self, _placement_cache.can_reuse_output(paths))
 
 	var endpoint_zones := _collect_path_endpoint_zones(paths)
 	var span_ranges_by_path := _collect_span_ranges_by_path(paths)
@@ -195,6 +260,8 @@ func regenerate() -> void:
 	var rng := _create_rng()
 	for path in paths:
 		created_count += _scatter_path(path, root, rng, endpoint_zones, span_ranges_by_path)
+	_output_cache.finish_build()
+	_placement_cache.end_build(rng)
 
 	if created_count <= 0:
 		_debug_log("regenerate done: nothing placed.")
@@ -210,6 +277,43 @@ func _scatter_path(
 	rng: RandomNumberGenerator,
 	endpoint_zones: Array,
 	span_ranges_by_path: Dictionary
+) -> int:
+	var key := _placement_cache.key_for(path, parent_root, rng, endpoint_zones, span_ranges_by_path)
+	var previous: Dictionary = {}
+	if not key.is_empty():
+		previous = _placement_cache.previous(path)
+		if previous.get("key", PackedByteArray()) == key and _placement_cache.ground_matches(previous):
+			var count := _replay_path_placements(path, parent_root, previous.placements)
+			rng.state = previous.rng_after
+			_placement_cache.stats.paths_reused += 1
+			_placement_cache.stats.placements_reused += count
+			for block: Dictionary in previous.get("blocks", []):
+				_placement_cache.stats.blocks_reused += 1
+				_placement_cache.stats.candidates_reused += block.candidate_count
+			_placement_cache.retain(path, previous)
+			return count
+	var placements: Array = []
+	var blocks: Array = []
+	var reused_before: int = _placement_cache.stats.placements_reused
+	var count := _scatter_path_uncached(path, parent_root, rng, endpoint_zones, span_ranges_by_path, placements,
+		not key.is_empty(), previous.get("blocks", []), blocks)
+	_placement_cache.stats.placements_rebuilt += count - (_placement_cache.stats.placements_reused - reused_before)
+	if not key.is_empty():
+		_placement_cache.stats.paths_rebuilt += 1
+		_placement_cache.retain(path, {"key": key, "placements": placements, "rng_after": rng.state, "blocks": blocks})
+	return count
+
+
+func _scatter_path_uncached(
+	path: Path3D,
+	parent_root: Node3D,
+	rng: RandomNumberGenerator,
+	endpoint_zones: Array,
+	span_ranges_by_path: Dictionary,
+	recorded_placements: Array,
+	record_placements: bool,
+	previous_blocks: Array = [],
+	recorded_blocks: Array = []
 ) -> int:
 	if path == null or path.curve == null or path.curve.point_count < 2:
 		return 0
@@ -237,14 +341,56 @@ func _scatter_path(
 	var loop_guard := 0
 	var created_count := 0
 	var has_last_valid_ground_y_by_side: Dictionary = {}
+	var use_multimesh := render_mode == RENDER_MULTIMESH and item_scene == null and item_mesh != null
+	var mesh_batches: Dictionary = {}
+	# Reuse one Node3D to match individual-node scale decomposition, including
+	# mirrored/non-uniform parent transforms, without allocating a node per prop.
+	var use_transform_proxy: bool = use_multimesh or _output_cache.enabled
+	var batch_transform_node := Node3D.new() if use_transform_proxy else null
+	var block_context: Dictionary = {}
+	var block: Dictionary = {}
+	var block_placement_start := 0
+	var block_distances := PackedFloat64Array()
+	var block_endpoint_queries: Array = []
+	var block_ground_queries: Array = []
+	if record_placements:
+		block_context = _placement_cache.path_context(path, parent_root, endpoint_zones,
+			_build_effective_ranges(path, length, span_ranges_by_path), ranges_mode)
 
 	while dist <= end_dist + 0.0001 and loop_guard < 200000:
+		if record_placements and loop_guard % _placement_cache.BLOCK_CANDIDATES == 0:
+			if not block.is_empty():
+				recorded_blocks.append(_placement_cache.finish_block(path, block_context, block, block_distances,
+					block_endpoint_queries, recorded_placements.slice(block_placement_start), rng,
+					block_ground_queries, has_last_valid_ground_y_by_side))
+			block = _placement_cache.open_block(path, block_context, previous_blocks,
+				int(loop_guard / _placement_cache.BLOCK_CANDIDATES), dist, begin, end_dist, step,
+				longitudinal_jitter, 200000 - loop_guard, rng, has_last_valid_ground_y_by_side)
+			if block.has("placements"):
+				var reused := _emit_recorded_placements(path, parent_root, block.placements, use_multimesh, mesh_batches, created_count)
+				created_count += reused
+				_placement_cache.stats.placements_reused += reused
+				recorded_placements.append_array(block.placements)
+				rng.state = block.rng_after
+				has_last_valid_ground_y_by_side = block.get("ground_state_after", {}).duplicate()
+				dist = block.next_dist
+				loop_guard += block.candidate_count
+				recorded_blocks.append(block)
+				block = {}
+				continue
+			block_placement_start = recorded_placements.size()
+			block_distances = PackedFloat64Array()
+			block_endpoint_queries = []
+			block_ground_queries = []
 		loop_guard += 1
+		_placement_cache.stats.sampling_steps += 1
 		var d := dist + rng.randf_range(-longitudinal_jitter, longitudinal_jitter)
 		d = clampf(d, begin, end_dist)
 		if not _distance_allowed_by_ranges(path, d, length, span_ranges_by_path):
 			dist += step
 			continue
+		if record_placements:
+			block_distances.append(d)
 		var center := path_to_world * curve.sample_baked(d, true)
 		var tangent := _sample_curve_tangent_world(curve, path_to_world, d, length)
 		var up := _sample_curve_up_world(curve, path_to_world, d)
@@ -267,11 +413,16 @@ func _scatter_path(
 			var up_offset := vertical_offset + rng.randf_range(-vertical_jitter, vertical_jitter)
 			var world_pos := center + right * side_offset + up * up_offset
 			if snap_to_ground_enabled:
-				var hit := _sample_terrain_height_hit(
+				_placement_cache.stats.ground_queries_sampled += 1
+				var hit := _placement_cache.sample_ground(
 					world_pos,
 					clampf(snap_to_ground_max_angle_deg, 0.0, 89.0),
 					snap_to_ground_y_offset
 				)
+				if record_placements:
+					# Record missing/steep hits too: a newly accepted candidate
+					# changes both per-side clamp state and subsequent RNG draws.
+					block_ground_queries.append([world_pos, hit.duplicate(true)])
 				var side_key := int(side)
 				var has_last_valid := has_last_valid_ground_y_by_side.has(side_key)
 				var last_valid_y := float(has_last_valid_ground_y_by_side.get(side_key, world_pos.y))
@@ -289,10 +440,12 @@ func _scatter_path(
 					else:
 						# Strict mode: discard props on slopes steeper than max angle.
 						continue
+			if record_placements and avoid_intersections:
+				block_endpoint_queries.append([world_pos, side])
 			if _point_blocked_by_intersection_zones(path, world_pos, side, endpoint_zones):
 				continue
 
-			var spawn_node := _instantiate_spawn_node()
+			var spawn_node := batch_transform_node if use_transform_proxy else _instantiate_spawn_node()
 			if spawn_node == null:
 				continue
 
@@ -307,16 +460,101 @@ func _scatter_path(
 
 			var uniform_scale := _sample_uniform_scale(rng)
 			spawn_node.scale = spawn_node.scale * uniform_scale
-
-			spawn_node.name = "Prop_%s_%06d" % [path.name, created_count]
-			spawn_node.set_meta(GENERATED_OWNER_META, str(get_path()))
-			parent_root.add_child(spawn_node)
-			_assign_generated_owner(spawn_node)
+			if record_placements:
+				recorded_placements.append([spawn_node.transform, world_pos])
+			if use_multimesh:
+				var cell_size := maxf(1.0, multimesh_chunk_size)
+				var cell := Vector3i(
+					floori(world_pos.x / cell_size),
+					floori(world_pos.y / cell_size),
+					floori(world_pos.z / cell_size)
+				)
+				if not mesh_batches.has(cell):
+					mesh_batches[cell] = []
+				mesh_batches[cell].append(spawn_node.transform)
+			elif _output_cache.enabled:
+				_output_cache.record_mesh(path, created_count, spawn_node.transform)
+			else:
+				spawn_node.name = "Prop_%s_%06d" % [path.name, created_count]
+				spawn_node.set_meta(GENERATED_OWNER_META, str(get_path()))
+				parent_root.add_child(spawn_node)
+				_assign_generated_owner(spawn_node)
 			created_count += 1
 
 		dist += step
 
+	if record_placements and not block.is_empty():
+		recorded_blocks.append(_placement_cache.finish_block(path, block_context, block, block_distances,
+			block_endpoint_queries, recorded_placements.slice(block_placement_start), rng,
+			block_ground_queries, has_last_valid_ground_y_by_side))
+	if use_transform_proxy:
+		batch_transform_node.free()
+	if use_multimesh:
+		_create_multimesh_batches(path, parent_root, mesh_batches)
 	return created_count
+
+
+func _replay_path_placements(path: Path3D, parent_root: Node3D, placements: Array) -> int:
+	var use_multimesh := render_mode == RENDER_MULTIMESH
+	var batches: Dictionary = {}
+	var count := _emit_recorded_placements(path, parent_root, placements, use_multimesh, batches, 0)
+	if use_multimesh:
+		_create_multimesh_batches(path, parent_root, batches)
+	return count
+
+
+func _emit_recorded_placements(path: Path3D, parent_root: Node3D, placements: Array,
+		use_multimesh: bool, batches: Dictionary, start_count: int) -> int:
+	var count := 0
+	for placement: Array in placements:
+		var transform_value: Transform3D = placement[0]
+		if use_multimesh:
+			var world_pos: Vector3 = placement[1]
+			var size := maxf(1.0, multimesh_chunk_size)
+			var cell := Vector3i(floori(world_pos.x / size), floori(world_pos.y / size), floori(world_pos.z / size))
+			if not batches.has(cell):
+				batches[cell] = []
+			batches[cell].append(transform_value)
+		elif _output_cache.enabled:
+			_output_cache.record_mesh(path, start_count + count, transform_value)
+		else:
+			var node := _instantiate_spawn_node()
+			node.transform = transform_value
+			node.name = "Prop_%s_%06d" % [path.name, start_count + count]
+			node.set_meta(GENERATED_OWNER_META, str(get_path()))
+			parent_root.add_child(node)
+			_assign_generated_owner(node)
+		count += 1
+	return count
+
+
+func _create_multimesh_batches(path: Path3D, parent_root: Node3D, batches: Dictionary) -> void:
+	var mesh_bounds := item_mesh.get_aabb()
+	for cell: Vector3i in batches:
+		var transforms: Array = batches[cell]
+		if _output_cache.enabled:
+			_output_cache.record_batch(path, cell, transforms, mesh_bounds)
+			continue
+		var multimesh := MultiMesh.new()
+		multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		multimesh.mesh = item_mesh
+		multimesh.instance_count = transforms.size()
+		var bounds := AABB()
+		for index in range(transforms.size()):
+			var instance_transform: Transform3D = transforms[index]
+			multimesh.set_instance_transform(index, instance_transform)
+			var instance_bounds := instance_transform * mesh_bounds
+			bounds = instance_bounds if index == 0 else bounds.merge(instance_bounds)
+		multimesh.custom_aabb = bounds
+
+		var batch := MultiMeshInstance3D.new()
+		batch.name = "Props_%s_%d_%d_%d" % [path.name, cell.x, cell.y, cell.z]
+		batch.multimesh = multimesh
+		batch.material_override = item_material_override
+		batch.cast_shadow = mesh_cast_shadows
+		batch.set_meta(GENERATED_OWNER_META, str(get_path()))
+		parent_root.add_child(batch)
+		_assign_generated_owner(batch)
 
 
 func _get_road_surface_frame(path: Path3D, distance: float) -> Dictionary:
@@ -408,9 +646,10 @@ func _compute_side_offset(path: Path3D, dist: float, length: float, side: int) -
 		"get_width_at_ratio",
 		default_lane_width
 	)
-	var lane_half := lane_width * 0.5
+	var lane_extents := _resolve_path_lane_extents(path, dist, length, lane_width)
+	var lane_side := lane_extents.x if side < 0 else lane_extents.y
 	if not edge_uses_total_road_width:
-		return lane_half * float(side)
+		return lane_side * float(side)
 
 	if side < 0:
 		var shoulder_l := _resolve_path_component_width(
@@ -429,7 +668,7 @@ func _compute_side_offset(path: Path3D, dist: float, length: float, side: int) -
 			"get_sidewalk_left_at_ratio",
 			0.0
 		)
-		return -(lane_half + shoulder_l + sidewalk_l)
+		return -(lane_side + shoulder_l + sidewalk_l)
 
 	var shoulder_r := _resolve_path_component_width(
 		path,
@@ -447,7 +686,22 @@ func _compute_side_offset(path: Path3D, dist: float, length: float, side: int) -
 		"get_sidewalk_right_at_ratio",
 		0.0
 	)
-	return lane_half + shoulder_r + sidewalk_r
+	return lane_side + shoulder_r + sidewalk_r
+
+
+func _resolve_path_lane_extents(path: Path3D, dist: float, length: float, width: float) -> Vector2:
+	var fallback := Vector2(width * 0.5, width * 0.5)
+	var raw_value: Variant
+	if path.has_method("get_lane_extents_at_offset"):
+		raw_value = path.call("get_lane_extents_at_offset", dist)
+	elif path.has_method("get_lane_extents_at_ratio"):
+		raw_value = path.call("get_lane_extents_at_ratio", clampf(dist / maxf(length, 0.0001), 0.0, 1.0))
+	else:
+		return fallback
+	if raw_value is Vector2:
+		var pair: Vector2 = raw_value
+		return Vector2(maxf(0.0, pair.x), maxf(0.0, pair.y))
+	return fallback
 
 
 func _resolve_path_component_width(
@@ -488,6 +742,32 @@ func _sample_terrain_height_hit(world_pos: Vector3, max_angle_deg: float, y_offs
 		"angle_deg": angle_deg,
 		"y": float(result.get("y", world_pos.y)) + y_offset_local,
 	}
+
+
+func _terrain_source_pending(provider: Node) -> bool:
+	return is_instance_valid(provider) and provider.has_method("is_terrain_generation_pending") \
+		and bool(provider.call("is_terrain_generation_pending"))
+
+
+func _bind_terrain_source(provider: Node) -> void:
+	if is_instance_valid(_connected_terrain_source) and _connected_terrain_source == provider:
+		return
+	if is_instance_valid(_connected_terrain_source) and _connected_terrain_source.has_signal("terrain_generation_completed") \
+			and _connected_terrain_source.is_connected("terrain_generation_completed", _on_terrain_generation_completed):
+		_connected_terrain_source.disconnect("terrain_generation_completed", _on_terrain_generation_completed)
+	_connected_terrain_source = provider
+	if is_instance_valid(provider) and provider.has_signal("terrain_generation_completed"):
+		provider.connect("terrain_generation_completed", _on_terrain_generation_completed)
+
+
+func _on_terrain_generation_completed() -> void:
+	if not snap_to_ground_enabled or not _can_generate() or _connected_terrain_source != _resolve_terrain_height_source():
+		return
+	if Engine.is_editor_hint() and not auto_regenerate_in_editor and not _terrain_regeneration_pending:
+		return
+	# Do not regenerate inside the provider's completion stack. Several edits
+	# coalesce, and the next process tick checks the latest provider/configuration.
+	_terrain_regeneration_pending = true
 
 
 func _get_terrain_height_source() -> Node:
@@ -774,6 +1054,7 @@ func _get_or_create_generated_root() -> Node3D:
 
 
 func _clear_all_generated_nodes() -> void:
+	_output_cache.discard_output()
 	_clear_generated_root()
 	_clear_generated_nodes_in_parent(get_parent())
 	_clear_generated_nodes_in_parent(self)
@@ -847,6 +1128,8 @@ func _build_signature() -> String:
 		str(item_mesh),
 		str(item_material_override),
 		str(mesh_cast_shadows),
+		str(render_mode),
+		str(multimesh_chunk_size),
 		str(placement_mode),
 		str(spacing),
 		str(start_offset),
@@ -901,9 +1184,14 @@ func _build_signature() -> String:
 		if not bool(child.call("is_spline_prop_span")):
 			continue
 		parts.append(str(child.get_instance_id()))
-		parts.append(str(child.global_transform))
 		for property_name in ["enabled", "target_path", "start_offset", "end_offset", "snap_handles_to_path", "lateral_offset", "vertical_offset"]:
-			parts.append(str(child.get(property_name)))
+			var value = child.get(property_name)
+			if property_name == "start_offset" or property_name == "end_offset":
+				# Span handles are projected against a baked curve. Quantize the
+				# insignificant floating-point residue so it cannot recreate every prop.
+				parts.append(str(snappedf(float(value), 0.001)))
+			else:
+				parts.append(str(value))
 
 	var paths := _resolve_paths()
 	parts.append(str(paths.size()))
@@ -913,7 +1201,9 @@ func _build_signature() -> String:
 			continue
 		parts.append(str(path.get_instance_id()))
 		parts.append(str(path.global_transform))
-		if path.has_method("get_width_profile_signature"):
+		if path.has_method("get_dependent_width_profile_signature"):
+			parts.append(str(path.call("get_dependent_width_profile_signature")))
+		elif path.has_method("get_width_profile_signature"):
 			parts.append(str(path.call("get_width_profile_signature")))
 		if path.has_method("get_edge_profile_signature"):
 			parts.append(str(path.call("get_edge_profile_signature")))

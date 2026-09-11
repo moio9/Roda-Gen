@@ -1,0 +1,264 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="example_junction.gd" id="connector"]
+
+[ext_resource type="Script" path="example_scene.gd" id="example"]
+
+[ext_resource type="Script" path="../../scripts/spline_road/road_network_creator.gd" id="road"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_path_profile.gd" id="profile"]
+[ext_resource type="Script" path="../../scripts/spline_road/terrain_topology_builder.gd" id="terrain"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_prop_array.gd" id="props"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_mesh_deformer.gd" id="deformer"]
+[ext_resource type="Script" path="example_camera.gd" id="camera"]
+
+[sub_resource type="StandardMaterial3D" id="asphalt"]
+albedo_color = Color(0.075, 0.085, 0.10, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="shoulder"]
+albedo_color = Color(0.32, 0.34, 0.35, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="sidewalk"]
+albedo_color = Color(0.64, 0.61, 0.54, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="metal"]
+albedo_color = Color(0.58, 0.63, 0.67, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="ground"]
+albedo_color = Color(0.28, 0.35, 0.24, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="paint"]
+albedo_color = Color(0.95, 0.95, 0.9, 1)
+
+[sub_resource type="PlaneMesh" id="ground_support"]
+size = Vector2(150, 150)
+material = SubResource("ground")
+
+[sub_resource type="BoxMesh" id="post"]
+size = Vector3(0.16, 0.9, 0.16)
+
+[sub_resource type="BoxMesh" id="rail"]
+size = Vector3(0.12, 0.24, 4)
+
+[sub_resource type="Environment" id="environment"]
+background_mode = 1
+background_color = Color(0.16, 0.22, 0.29, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.85, 0.9, 1, 1)
+ambient_light_energy = 0.7
+
+[sub_resource type="Curve3D" id="North"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, -14, 0, 0, 0, 0, 0, 0, 0, 0, -85),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="South"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 85),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="East"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 85, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="West"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -14, 0, 0, 0, 0, 0, 0, 0, 0, -85, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="BoxMesh" id="building0"]
+size = Vector3(28, 13, 22)
+material = SubResource("sidewalk")
+
+[sub_resource type="BoxMesh" id="building1"]
+size = Vector3(22, 8, 28)
+material = SubResource("sidewalk")
+
+[sub_resource type="BoxMesh" id="building2"]
+size = Vector3(28, 13, 22)
+material = SubResource("sidewalk")
+
+[sub_resource type="BoxMesh" id="building3"]
+size = Vector3(22, 8, 28)
+material = SubResource("sidewalk")
+
+[node name="urban_intersection" type="Node3D"]
+script = ExtResource("example")
+
+[node name="GroundSupport" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.16, 0)
+mesh = SubResource("ground_support")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("environment")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.95, -0.6, 0)
+light_color = Color(1, 0.91, 0.79, 1)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="Camera" type="Camera3D" parent="."]
+position = Vector3(90, 110, 105)
+rotation = Vector3(-0.6709665828282987, 0.6947382761967031, 0)
+current = true
+far = 1600.0
+fov = 58.0
+script = ExtResource("camera")
+focus = Vector3(0, 0, 0)
+example_title = "URBAN / Four-way intersection"
+
+[node name="Road" type="Node3D" parent="."]
+script = ExtResource("road")
+road_material_override = SubResource("asphalt")
+shoulder_material_override = SubResource("shoulder")
+sidewalk_material_override = SubResource("sidewalk")
+sample_step = 1.5
+invert_faces = true
+allow_endpoint_to_midpath = false
+intersection_strip_length = 10.0
+adaptive_sampling_enabled = false
+incremental_generation_enabled = true
+markings_enabled = true
+markings_center_style = 3
+markings_dash_length = 3.0
+markings_dash_gap = 4.0
+debug_generation_logs = false
+threaded_generation_enabled = false
+
+[node name="North" type="Path3D" parent="Road"]
+curve = SubResource("North")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 1
+default_lanes_right = 1
+point_lanes_left = PackedInt32Array(1, 1)
+point_lanes_right = PackedInt32Array(1, 1)
+point_lane_widths = PackedFloat32Array(3.25, 3.25)
+shoulder_left_width = 0.5
+shoulder_right_width = 0.5
+sidewalk_left_width = 1.8
+sidewalk_right_width = 1.8
+show_width_preview = false
+
+[node name="South" type="Path3D" parent="Road"]
+curve = SubResource("South")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 1
+default_lanes_right = 1
+point_lanes_left = PackedInt32Array(1, 1)
+point_lanes_right = PackedInt32Array(1, 1)
+point_lane_widths = PackedFloat32Array(3.25, 3.25)
+shoulder_left_width = 0.5
+shoulder_right_width = 0.5
+sidewalk_left_width = 1.8
+sidewalk_right_width = 1.8
+show_width_preview = false
+
+[node name="East" type="Path3D" parent="Road"]
+curve = SubResource("East")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 1
+default_lanes_right = 1
+point_lanes_left = PackedInt32Array(1, 1)
+point_lanes_right = PackedInt32Array(1, 1)
+point_lane_widths = PackedFloat32Array(3.25, 3.25)
+shoulder_left_width = 0.5
+shoulder_right_width = 0.5
+sidewalk_left_width = 1.8
+sidewalk_right_width = 1.8
+show_width_preview = false
+
+[node name="West" type="Path3D" parent="Road"]
+curve = SubResource("West")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 1
+default_lanes_right = 1
+point_lanes_left = PackedInt32Array(1, 1)
+point_lanes_right = PackedInt32Array(1, 1)
+point_lane_widths = PackedFloat32Array(3.25, 3.25)
+shoulder_left_width = 0.5
+shoulder_right_width = 0.5
+sidewalk_left_width = 1.8
+sidewalk_right_width = 1.8
+show_width_preview = false
+
+[node name="Terrain" type="Node3D" parent="."]
+script = ExtResource("terrain")
+source_paths = Array[NodePath]([NodePath("../Road/North"), NodePath("../Road/South"), NodePath("../Road/East"), NodePath("../Road/West")])
+road_network_source = NodePath("../Road")
+path_sample_step = 3.0
+adaptive_path_sampling = false
+bounds_mode = 1
+manual_center_xz = Vector2(0, 0)
+manual_size_xz = Vector2(150, 150)
+far_grid_step = 12.0
+near_road_step = 6.0
+near_road_width = 18.0
+invert_faces = true
+left_profile_distances = PackedFloat32Array(0, 3, 8, 18, 35, 65)
+left_profile_heights = PackedFloat32Array(-0.15, -0.15, -0.15, -0.15, -0.15, -0.15)
+right_profile_distances = PackedFloat32Array(0, 3, 12, 30, 50, 80)
+right_profile_heights = PackedFloat32Array(-0.15, -0.15, -0.15, -0.15, -0.15, -0.15)
+base_height = -0.15
+terrain_edge_y_offset = -0.15
+noise_enabled = false
+noise_amplitude = 2.5
+terrain_material_override = SubResource("ground")
+threaded_triangulation_enabled = false
+incremental_generation_enabled = true
+
+[node name="Bollards" type="Node3D" parent="."]
+script = ExtResource("props")
+source_paths = Array[NodePath]([NodePath("../Road/North"), NodePath("../Road/South"), NodePath("../Road/East"), NodePath("../Road/West")])
+road_network_source = NodePath("../Road")
+item_mesh = SubResource("post")
+item_material_override = SubResource("metal")
+placement_mode = 3
+spacing = 12.0
+start_offset = 14.0
+end_trim = 5.0
+outward_offset = 0.1
+vertical_offset = 0.45
+ranges_mode = 0
+
+[node name="BlockoutBuildings" type="Node3D" parent="."]
+
+[node name="Block1" type="MeshInstance3D" parent="BlockoutBuildings"]
+position = Vector3(-32, 6.5, 32)
+mesh = SubResource("building0")
+
+[node name="Block2" type="MeshInstance3D" parent="BlockoutBuildings"]
+position = Vector3(-32, 4, -32)
+mesh = SubResource("building1")
+
+[node name="Block3" type="MeshInstance3D" parent="BlockoutBuildings"]
+position = Vector3(32, 6.5, 32)
+mesh = SubResource("building2")
+
+[node name="Block4" type="MeshInstance3D" parent="BlockoutBuildings"]
+position = Vector3(32, 4, -32)
+mesh = SubResource("building3")
+
+[node name="Intersection" type="MeshInstance3D" parent="."]
+script = ExtResource("connector")
+layout = 0
+asphalt = SubResource("asphalt")
+sidewalk = SubResource("sidewalk")
+paint = SubResource("paint")

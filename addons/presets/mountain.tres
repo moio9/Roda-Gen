@@ -1,0 +1,35 @@
+[gd_resource type="Resource" script_class="SplineRoadPreset" format=3 uid="uid://ciqt7cjn64kbk"]
+
+[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/roda-gen/scripts/spline_road/road_preset.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="Steel"]
+resource_name = "Galvanized Rail"
+albedo_color = Color(0.48, 0.51, 0.55, 1)
+metallic = 0.75
+roughness = 0.45
+
+[sub_resource type="Curve" id="Ease"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="StandardMaterial3D" id="Asphalt"]
+resource_name = "Mountain Asphalt"
+albedo_color = Color(0.075, 0.065, 0.055, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="Gravel"]
+resource_name = "Mountain Gravel"
+albedo_color = Color(0.32, 0.23, 0.14, 1)
+
+[resource]
+script = ExtResource("1")
+display_name = "Mountain"
+lane_width = 3.2
+lane_transition_curve = SubResource("Ease")
+road_orientation_mode = 2
+road_bank_max_degrees = 10.0
+road_bank_strength = 0.8
+road_material_override = SubResource("Asphalt")
+shoulder_material_override = SubResource("Gravel")
+terrain_material_override = SubResource("Gravel")
+barrier_material = SubResource("Steel")

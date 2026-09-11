@@ -1,0 +1,49 @@
+[gd_resource type="Resource" script_class="SplineRoadPreset" format=3 uid="uid://qilc0w470ji5"]
+
+[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/roda-gen/scripts/spline_road/road_preset.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="Concrete"]
+resource_name = "Highway Concrete"
+albedo_color = Color(0.57, 0.56, 0.53, 1)
+roughness = 0.95
+
+[sub_resource type="Curve" id="Ease"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="StandardMaterial3D" id="Asphalt"]
+resource_name = "Highway Asphalt"
+albedo_color = Color(0.045, 0.055, 0.07, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="Shoulder"]
+resource_name = "Highway Shoulder"
+albedo_color = Color(0.13, 0.14, 0.15, 1)
+
+[resource]
+script = ExtResource("1")
+display_name = "Highway"
+lanes_left = 2
+lanes_right = 2
+lane_width = 3.75
+lane_transition_length = 80.0
+lane_transition_curve = SubResource("Ease")
+sample_step = 1.0
+shoulder_left_width = 2.5
+shoulder_right_width = 2.5
+road_orientation_mode = 2
+road_bank_max_degrees = 4.0
+road_bank_strength = 0.5
+road_bank_sample_distance = 6.0
+road_material_override = SubResource("Asphalt")
+shoulder_material_override = SubResource("Shoulder")
+terrain_material_override = SubResource("Shoulder")
+outer_wall_material_override = SubResource("Concrete")
+markings_center_style = 0
+markings_dash_length = 6.0
+markings_dash_gap = 9.0
+barrier_style = 2
+barrier_material = SubResource("Concrete")
+barrier_center = true
+barrier_outward_offset = 0.4
+barrier_end_clearance = 4.0

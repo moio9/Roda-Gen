@@ -3,16 +3,16 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ds66vrlmb48se"
-path.etc2="res://.godot/imported/road_capture.png-caab9875e23e32714bfb4b62c63dc673.etc2.ctex"
+path.s3tc="res://.godot/imported/road_capture.png-caab9875e23e32714bfb4b62c63dc673.s3tc.ctex"
 metadata={
-"imported_formats": ["etc2_astc"],
+"imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://road_capture.png"
-dest_files=["res://.godot/imported/road_capture.png-caab9875e23e32714bfb4b62c63dc673.etc2.ctex"]
+dest_files=["res://.godot/imported/road_capture.png-caab9875e23e32714bfb4b62c63dc673.s3tc.ctex"]
 
 [params]
 

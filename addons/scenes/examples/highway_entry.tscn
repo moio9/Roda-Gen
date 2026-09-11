@@ -1,0 +1,188 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="example_junction.gd" id="connector"]
+
+[ext_resource type="Script" path="example_scene.gd" id="example"]
+
+[ext_resource type="Script" path="../../scripts/spline_road/road_network_creator.gd" id="road"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_path_profile.gd" id="profile"]
+[ext_resource type="Script" path="../../scripts/spline_road/terrain_topology_builder.gd" id="terrain"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_prop_array.gd" id="props"]
+[ext_resource type="Script" path="../../scripts/spline_road/spline_mesh_deformer.gd" id="deformer"]
+[ext_resource type="Script" path="example_camera.gd" id="camera"]
+
+[sub_resource type="StandardMaterial3D" id="asphalt"]
+albedo_color = Color(0.075, 0.085, 0.10, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="shoulder"]
+albedo_color = Color(0.32, 0.34, 0.35, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="sidewalk"]
+albedo_color = Color(0.64, 0.61, 0.54, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="metal"]
+albedo_color = Color(0.58, 0.63, 0.67, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="ground"]
+albedo_color = Color(0.38, 0.43, 0.25, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="paint"]
+albedo_color = Color(0.95, 0.95, 0.9, 1)
+
+[sub_resource type="PlaneMesh" id="ground_support"]
+size = Vector2(180, 380)
+material = SubResource("ground")
+
+[sub_resource type="BoxMesh" id="post"]
+size = Vector3(0.16, 0.9, 0.16)
+
+[sub_resource type="BoxMesh" id="rail"]
+size = Vector3(0.12, 0.24, 4)
+
+[sub_resource type="Environment" id="environment"]
+background_mode = 1
+background_color = Color(0.16, 0.22, 0.29, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.85, 0.9, 1, 1)
+ambient_light_energy = 0.7
+
+[sub_resource type="Curve3D" id="MainApproach"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, -190, 0, 0, 0, 0, 0, 0, 0, 0, 225),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="EntryRamp"]
+_data = {
+"points": PackedVector3Array(0, 0, -35, 0, 0, 35, 95, 0, -165, 30, 0, -35, -30, 0, 35, 42, 0, -75, 0, 0, -40, 0, 0, 0, 7.5, 0, 20),
+"tilts": PackedFloat32Array(0, 0, 0)
+}
+point_count = 3
+
+[sub_resource type="Curve3D" id="OppositeCarriageway"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -18, 0, 225, 0, 0, 0, 0, 0, 0, -18, 0, -190),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[node name="highway_entry" type="Node3D"]
+script = ExtResource("example")
+
+[node name="GroundSupport" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.16, 15)
+mesh = SubResource("ground_support")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("environment")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.95, -0.6, 0)
+light_color = Color(1, 0.91, 0.79, 1)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="Camera" type="Camera3D" parent="."]
+position = Vector3(170, 225, 205)
+rotation = Vector3(-0.6625532526596035, 0.7968919101124788, 0)
+current = true
+far = 1600.0
+fov = 58.0
+script = ExtResource("camera")
+focus = Vector3(15, 0, 15)
+example_title = "HIGHWAY / Entry and acceleration lane"
+
+[node name="Road" type="Node3D" parent="."]
+script = ExtResource("road")
+road_material_override = SubResource("asphalt")
+shoulder_material_override = SubResource("shoulder")
+sidewalk_material_override = SubResource("sidewalk")
+sample_step = 1.5
+invert_faces = true
+allow_endpoint_to_midpath = false
+adaptive_sampling_enabled = false
+incremental_generation_enabled = true
+markings_enabled = true
+markings_center_style = 0
+markings_edge_style = 0
+markings_dash_length = 6.0
+markings_dash_gap = 9.0
+debug_generation_logs = false
+threaded_generation_enabled = false
+
+[node name="MainApproach" type="Path3D" parent="Road"]
+curve = SubResource("MainApproach")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 0
+default_lanes_right = 2
+point_lanes_left = PackedInt32Array(0, 0)
+point_lanes_right = PackedInt32Array(2, 2)
+point_lane_widths = PackedFloat32Array(3.75, 3.75)
+shoulder_left_width = 0.0
+shoulder_right_width = 0.0
+show_width_preview = false
+
+[node name="EntryRamp" type="Path3D" parent="Road"]
+curve = SubResource("EntryRamp")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 0
+default_lanes_right = 1
+point_lanes_left = PackedInt32Array(0, 0, 0)
+point_lanes_right = PackedInt32Array(1, 1, 1)
+point_lane_widths = PackedFloat32Array(3.75, 3.75, 3.75)
+shoulder_left_width = 0.0
+shoulder_right_width = 0.0
+show_width_preview = false
+
+[node name="OppositeCarriageway" type="Path3D" parent="Road"]
+curve = SubResource("OppositeCarriageway")
+script = ExtResource("profile")
+lane_profile_enabled = true
+default_lanes_left = 0
+default_lanes_right = 2
+point_lanes_left = PackedInt32Array(0, 0)
+point_lanes_right = PackedInt32Array(2, 2)
+point_lane_widths = PackedFloat32Array(3.75, 3.75)
+shoulder_left_width = 0.0
+shoulder_right_width = 0.0
+show_width_preview = false
+
+[node name="Terrain" type="Node3D" parent="."]
+script = ExtResource("terrain")
+source_paths = Array[NodePath]([NodePath("../Road/MainApproach"), NodePath("../Road/EntryRamp"), NodePath("../Road/OppositeCarriageway")])
+road_network_source = NodePath("../Road")
+path_sample_step = 3.0
+adaptive_path_sampling = false
+bounds_mode = 1
+manual_center_xz = Vector2(0, 15)
+manual_size_xz = Vector2(180, 380)
+far_grid_step = 12.0
+near_road_step = 6.0
+near_road_width = 18.0
+invert_faces = true
+left_profile_distances = PackedFloat32Array(0, 3, 8, 18, 35, 65)
+left_profile_heights = PackedFloat32Array(-0.15, -0.15, -0.15, -0.15, -0.15, -0.15)
+right_profile_distances = PackedFloat32Array(0, 3, 12, 30, 50, 80)
+right_profile_heights = PackedFloat32Array(-0.15, -0.15, -0.15, -0.15, -0.15, -0.15)
+base_height = -0.15
+terrain_edge_y_offset = -0.15
+noise_enabled = false
+noise_amplitude = 2.5
+terrain_material_override = SubResource("ground")
+threaded_triangulation_enabled = false
+incremental_generation_enabled = true
+
+[node name="AccelerationLane" type="MeshInstance3D" parent="."]
+script = ExtResource("connector")
+layout = 1
+asphalt = SubResource("asphalt")
+sidewalk = SubResource("sidewalk")
+paint = SubResource("paint")

@@ -19,8 +19,14 @@ class_name SplinePropSpan3D
 const START_HANDLE_NAME := "StartHandle"
 const END_HANDLE_NAME := "EndHandle"
 const PREVIEW_NODE_NAME := "__SpanPreview"
+## The inspector edits offsets in 0.1 m steps. Ignore sub-millimetre noise from
+## projecting a handle back onto a baked curve, otherwise it can trigger an
+## endless prop-array regeneration loop after a drag ends.
+const OFFSET_SYNC_EPSILON := 0.001
 
 var _last_offsets := Vector2(INF, INF)
+var _last_start_handle_position := Vector3(INF, INF, INF)
+var _last_end_handle_position := Vector3(INF, INF, INF)
 var _syncing := false
 var _preview_material: StandardMaterial3D
 var _last_preview_signature := ""
@@ -38,9 +44,9 @@ func _process(_delta: float) -> void:
 		return
 	_ensure_handles()
 	var offsets := Vector2(start_offset, end_offset)
-	if offsets != _last_offsets:
+	if not _offsets_match(offsets, _last_offsets):
 		_update_handles_from_offsets()
-	else:
+	elif _handles_were_moved():
 		_update_offsets_from_handles()
 	_update_preview()
 
@@ -113,12 +119,14 @@ func _update_handles_from_offsets() -> void:
 		end.global_position = _offset_to_world(path, end_offset, length)
 	_syncing = false
 	_last_offsets = Vector2(start_offset, end_offset)
+	_remember_handle_positions()
 
 
 func _update_offsets_from_handles() -> void:
 	if _syncing:
 		return
 	if not snap_handles_to_path:
+		_remember_handle_positions()
 		return
 	var path := _resolve_target_path()
 	if path == null or path.curve == null or path.curve.point_count < 2:
@@ -135,13 +143,48 @@ func _update_offsets_from_handles() -> void:
 	new_start = clampf(new_start, 0.0, length)
 	new_end = clampf(new_end, 0.0, length)
 
+	var start_changed := absf(new_start - start_offset) > OFFSET_SYNC_EPSILON
+	var end_changed := absf(new_end - end_offset) > OFFSET_SYNC_EPSILON
+	if not start_changed and not end_changed:
+		_last_offsets = Vector2(start_offset, end_offset)
+		_remember_handle_positions()
+		return
+
 	_syncing = true
-	start_offset = new_start
-	end_offset = new_end
-	start.global_position = _offset_to_world(path, start_offset, length)
-	end.global_position = _offset_to_world(path, end_offset, length)
+	if start_changed:
+		start_offset = new_start
+		start.global_position = _offset_to_world(path, start_offset, length)
+	if end_changed:
+		end_offset = new_end
+		end.global_position = _offset_to_world(path, end_offset, length)
 	_syncing = false
 	_last_offsets = Vector2(start_offset, end_offset)
+	_remember_handle_positions()
+
+
+func _offsets_match(a: Vector2, b: Vector2) -> bool:
+	return absf(a.x - b.x) <= OFFSET_SYNC_EPSILON and absf(a.y - b.y) <= OFFSET_SYNC_EPSILON
+
+
+func _handles_were_moved() -> bool:
+	var start := _find_handle(START_HANDLE_NAME)
+	var end := _find_handle(END_HANDLE_NAME)
+	if start == null or end == null:
+		return false
+	var epsilon_sq := OFFSET_SYNC_EPSILON * OFFSET_SYNC_EPSILON
+	return (
+		start.global_position.distance_squared_to(_last_start_handle_position) > epsilon_sq
+		or end.global_position.distance_squared_to(_last_end_handle_position) > epsilon_sq
+	)
+
+
+func _remember_handle_positions() -> void:
+	var start := _find_handle(START_HANDLE_NAME)
+	var end := _find_handle(END_HANDLE_NAME)
+	if start != null:
+		_last_start_handle_position = start.global_position
+	if end != null:
+		_last_end_handle_position = end.global_position
 
 
 func _world_to_offset(path: Path3D, world_pos: Vector3) -> float:

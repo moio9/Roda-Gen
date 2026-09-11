@@ -1,0 +1,48 @@
+[gd_resource type="Resource" script_class="SplineRoadPreset" format=3 uid="uid://b26e57nfx047w"]
+
+[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/roda-gen/scripts/spline_road/road_preset.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="Railing"]
+resource_name = "Painted Railing"
+albedo_color = Color(0.06, 0.09, 0.11, 1)
+metallic = 0.5
+roughness = 0.6
+
+[sub_resource type="Curve" id="Ease"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="StandardMaterial3D" id="Asphalt"]
+resource_name = "Urban Asphalt"
+albedo_color = Color(0.055, 0.065, 0.08, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="Pavement"]
+resource_name = "Urban Pavement"
+albedo_color = Color(0.55, 0.52, 0.48, 1)
+roughness = 0.9
+
+[resource]
+script = ExtResource("1")
+display_name = "Urban"
+lane_width = 3.25
+lane_transition_length = 20.0
+lane_transition_curve = SubResource("Ease")
+shoulder_left_width = 0.15
+shoulder_right_width = 0.15
+sidewalk_left_width = 2.0
+sidewalk_right_width = 2.0
+sidewalk_height = 0.15
+road_orientation_mode = 1
+road_bank_max_degrees = 0.0
+road_material_override = SubResource("Asphalt")
+shoulder_material_override = SubResource("Asphalt")
+sidewalk_material_override = SubResource("Pavement")
+terrain_material_override = SubResource("Pavement")
+markings_center_style = 2
+markings_center_color = Color(0.95, 0.95, 0.95, 1)
+markings_dash_length = 2.0
+markings_dash_gap = 3.0
+barrier_style = 3
+barrier_material = SubResource("Railing")
+barrier_outward_offset = 0.1

@@ -11,12 +11,13 @@ config_version=5
 [application]
 
 config/name="RodaGen"
+run/main_scene="uid://g7sjxqx3ctvx"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 
 [editor_plugins]
 
-enabled=PackedStringArray()
+enabled=PackedStringArray("res://addons/plugin.cfg")
 
 [physics]
 

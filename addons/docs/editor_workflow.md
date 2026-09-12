@@ -100,3 +100,18 @@ Verified on the custom Godot 4.7.2 build, Forward+ / RX 6800 XT: widening change
 and both preview colors were visible. The custom build still logs one
 `Contact shadows: no environment active` renderer diagnostic during editor
 initialization; this check does not establish the cause of that engine message.
+
+Terrain startup regeneration is deferred until after the editor restores saved
+node selections. Previously, opening a scene with `GeneratedTopologyTerrain`
+selected freed that mesh during `_ready()`, leaving editor selection restoration
+with a stale node pointer (SIGSEGV in `EditorSelection::add_node` on Termux).
+Terrain still regenerates automatically; callbacks for detached/disabled builders
+are skipped. The focused editor regression check is:
+
+```sh
+godot --headless --editor --path . -- --roda-terrain-startup-tests
+```
+
+It verifies that saved output survives scene-tree entry, can be selected safely,
+and is retired after startup with selection cleanup. It also checks that a builder
+removed from the tree before its deferred callback does not regenerate.

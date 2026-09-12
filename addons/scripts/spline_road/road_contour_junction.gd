@@ -189,13 +189,24 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 		if attempt < 3:
 			return build(road, verts, normals, uvs, surfaces, sockets, cluster, paths, attempt + 1)
 		return _reject("Could not construct non-overlapping sidewalks at authored widths within available arm lengths", arm_retreats)
+	# Nonplanar junctions need interior support. Ear clipping in XZ alone can
+	# connect almost-collinear boundary vertices with different heights and
+	# turn a gentle approach into a near-vertical asphalt sliver.
+	var surface_points := outline.duplicate()
+	var interior := _interior_support(outline, center) if arms.size() >= 3 else {}
+	if not interior.is_empty():
+		var interior_index := surface_points.size()
+		surface_points.append(interior.point)
+		triangles.clear()
+		for edge in range(outline.size()):
+			triangles.append_array(PackedInt32Array([edge, (edge + 1) % outline.size(), interior_index]))
 	# Commit only after validating the full candidate.
 	for surface in surfaces:
 		remove_retired_triangles(surface, discarded)
 	removed_vertices.merge(discarded)
 	regions.append_array(pending_regions)
 	var base := verts.size()
-	for point in outline:
+	for point in surface_points:
 		_vertex(point, verts, normals, uvs)
 	for i in range(0, triangles.size(), 3):
 		_triangle(surfaces[0], base + triangles[i], base + triangles[i + 1], base + triangles[i + 2], verts, bool(road.invert_faces))
@@ -203,8 +214,49 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 		_band(corner.lane, corner.shoulder, surfaces[1], verts, normals, uvs, bool(road.invert_faces))
 		_band(corner.shoulder, corner.sidewalk, surfaces[2], verts, normals, uvs, bool(road.invert_faces))
 	reports.append({"ok": true, "arms": arms.size(), "corners": corners.size(), "center": center,
-		"retreat": clearance, "arm_retreats": arm_retreats, "retries": attempt})
+		"retreat": clearance, "arm_retreats": arm_retreats, "retries": attempt,
+		"interior_support": not interior.is_empty()})
 	return true
+
+func _interior_support(outline: PackedVector3Array, center: Vector3) -> Dictionary:
+	var min_y := INF
+	var max_y := -INF
+	var rays := PackedVector2Array()
+	for point in outline:
+		min_y = minf(min_y, point.y)
+		max_y = maxf(max_y, point.y)
+		rays.append(_xz(point - center))
+	if max_y - min_y < 0.0001:
+		return {}
+	# A fan is valid only from the polygon kernel: every boundary edge must
+	# see the center on the same side. Concave non-star-shaped outlines retain
+	# the validated polygon triangulation instead of gaining crossing triangles.
+	var sign_ := 0.0
+	var half_angles := PackedFloat64Array()
+	for i in range(rays.size()):
+		var a := rays[i]
+		var b := rays[(i + 1) % rays.size()]
+		var cross_ := a.cross(b)
+		if absf(cross_) < 0.00001:
+			return {}
+		if sign_ == 0.0:
+			sign_ = signf(cross_)
+		if cross_ * sign_ <= 0.0:
+			return {}
+		var denominator := a.length() * b.length() + a.dot(b)
+		if denominator <= 0.00001:
+			return {}
+		half_angles.append(absf(cross_) / denominator)
+	# Mean-value coordinates reproduce a tilted plane exactly and interpolate
+	# a banked boundary without moving the retained road cross sections.
+	var weight_sum := 0.0
+	var height_sum := 0.0
+	for i in range(rays.size()):
+		var weight := (half_angles[(i + rays.size() - 1) % rays.size()] + half_angles[i]) / rays[i].length()
+		weight_sum += weight
+		height_sum += weight * outline[i].y
+	center.y = height_sum / weight_sum
+	return {"point": center}
 
 func _connection_center(a: Dictionary, b: Dictionary, t: float, blend: float) -> Vector3:
 	var p: Vector3 = a.position

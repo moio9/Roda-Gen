@@ -1,0 +1,26 @@
+[gd_scene format=3 uid="uid://dtgk38oxf123f"]
+
+[ext_resource type="Script" uid="uid://b8dn8sx6ln6xf" path="res://addons/scripts/spline_road/road_network_creator.gd" id="1_0ykk5"]
+[ext_resource type="Script" uid="uid://cdaj44iqbrlce" path="res://addons/scripts/spline_road/spline_path_profile.gd" id="2_etl65"]
+
+[sub_resource type="Curve3D" id="Curve3D_jt57o"]
+
+[node name="Node3D" type="Node3D" unique_id=714337607]
+
+[node name="RoadNetworkCreator3D" type="Node3D" parent="." unique_id=1237524436]
+script = ExtResource("1_0ykk5")
+metadata/_custom_type_script = "uid://b8dn8sx6ln6xf"
+
+[node name="SplinePathProfile3D" type="Path3D" parent="RoadNetworkCreator3D" unique_id=306216384]
+curve = SubResource("Curve3D_jt57o")
+script = ExtResource("2_etl65")
+point_widths = PackedFloat32Array()
+point_lanes_left = PackedInt32Array()
+point_lanes_right = PackedInt32Array()
+point_lane_widths = PackedFloat32Array()
+point_lane_transition_lengths = PackedFloat32Array()
+terrain_left_profile_distances = PackedFloat32Array()
+terrain_left_profile_heights = PackedFloat32Array()
+terrain_right_profile_distances = PackedFloat32Array()
+terrain_right_profile_heights = PackedFloat32Array()
+metadata/_custom_type_script = "uid://cdaj44iqbrlce"

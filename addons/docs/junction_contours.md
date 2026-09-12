@@ -38,6 +38,14 @@ shoulders and sidewalks are separate bands. Sidewalk widths and heights blend
 between actual connected edges instead of squeezing an entire cross section.
 Two-arm joins and endpoint-to-midpath T connections use the same source roads.
 
+For sloped outlines with at least three arms, the builder uses a triangle fan
+when the junction center lies strictly inside the polygon kernel. Its interior
+height uses mean-value interpolation of the boundary, preserving planar slopes
+and the retained cross sections. This avoids steep sliver faces from boundary-only
+triangulation. Flat outlines and outlines that cannot safely support this fan keep
+the existing polygon triangulation. This does not impose a maximum road grade.
+The junction report's `interior_support` flag identifies the fan construction.
+
 Asphalt and outer-sidewalk outlines are checked for self-intersection before
 publishing. Each arm requests retreat based on its own width and is capped at
 its own available sampled length, retaining at least one original end segment.

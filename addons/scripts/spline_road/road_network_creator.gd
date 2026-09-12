@@ -3123,6 +3123,14 @@ func _resolve_road_frame(
 ) -> Dictionary:
 	var world_up := _world_up_in_mesh_space()
 	var tangent := p_next_mesh - p_prev_mesh
+	# Explicitly closed World Up paths need the same cross section at both ends.
+	# One-sided probes leave a wedge at the loop seam, especially far from origin.
+	if road_orientation_mode == ROAD_ORIENTATION_WORLD_UP and length > 0.2 and curve.point_count > 2 \
+			and curve.get_point_position(0).is_equal_approx(curve.get_point_position(curve.point_count-1)) \
+			and (dist < 0.1 or dist > length-0.1):
+		var wrapped := fposmod(dist,length)
+		tangent = path_to_mesh.basis * (curve.sample_baked(fposmod(wrapped+0.1,length),true) \
+			- curve.sample_baked(fposmod(wrapped-0.1,length),true))
 	if road_orientation_mode != ROAD_ORIENTATION_CURVE_UP:
 		tangent.y = 0.0
 	if tangent.length_squared() <= 0.000000000001:

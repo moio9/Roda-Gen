@@ -10,6 +10,9 @@ gameplay controller is included. All materials and meshes are self-contained.
 | [Highway entry](../scenes/examples/highway_entry.tscn) | Straight two-lane carriageway, tangential ramp, parallel acceleration lane and gradual taper | `Road/MainApproach`, `Road/EntryRamp`, `AccelerationLane` |
 | [Canyon road](../scenes/examples/canyon_road.tscn) | Climbing bends, asymmetric cliff/valley terrain profiles, procedural rock strata and spline guardrail | `Road/CanyonRoute`, `Terrain`, `Guardrail` |
 
+For a larger, compressed mountain resort, open [Poiana Brașov](../scenes/examples/poiana_brasov.tscn).
+Its editing, terrain and forest details are in [the dedicated scene notes](poiana_brasov.md).
+
 ## Navigation
 
 - Hold right mouse and drag to orbit.
@@ -69,3 +72,8 @@ The check loads all three scenes and requires road, marking and terrain meshes,
 the expected junction counts, acceleration-lane settings, prop/deformer output,
 and working camera zoom/reset.
 The second command additionally saves previews to `/tmp/roda-example-*.png`.
+
+## Poiana to Brașov centre
+
+[Mapped 11.8 km road and roundabout](brasov_centru.md), with a camera tour for
+inspecting curves and grades without a vehicle. Uses the normal addon generators.

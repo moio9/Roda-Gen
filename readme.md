@@ -31,6 +31,10 @@ New editable examples: [urban intersection](addons/scenes/examples/urban_interse
 [canyon road](addons/scenes/examples/canyon_road.tscn).
 Open one and press **F6**. See [example controls and editing notes](addons/docs/examples.md).
 
+Larger landscape example: [Poiana Brașov](addons/scenes/examples/poiana_brasov.tscn),
+a stylized mountain resort with editable access roads, contour junctions, terrain
+modifiers and forest batches. See [scene notes](addons/docs/poiana_brasov.md).
+
 1. Open this project in Godot. The Roda-Gen editor plugin is enabled in
    `project.godot`; enable it under Project Settings > Plugins in a consuming project.
 2. Open `addons/scenes/spline_road/spline_intersections_demo.tscn` for the road,

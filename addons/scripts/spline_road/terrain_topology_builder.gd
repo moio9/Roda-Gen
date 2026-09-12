@@ -244,10 +244,18 @@ func _ready() -> void:
 	set_process(true)
 	_configure_noise()
 	if Engine.is_editor_hint() and generate_in_editor and not source_paths.is_empty():
-		if auto_regenerate_in_editor and _road_sources_pending():
-			return
-		_last_signature = _build_signature()
-		regenerate()
+		# The editor captures saved selections before entering the scene tree.
+		# Rebuilding here frees those nodes before EditorSelection restores them.
+		_regenerate_after_editor_ready.call_deferred()
+
+
+func _regenerate_after_editor_ready() -> void:
+	if not is_inside_tree() or not Engine.is_editor_hint() or not generate_in_editor or source_paths.is_empty():
+		return
+	if auto_regenerate_in_editor and _road_sources_pending():
+		return
+	_last_signature = _build_signature()
+	regenerate()
 
 
 func _exit_tree() -> void:
@@ -1079,6 +1087,13 @@ func _resolve_road_frame(
 	var bank_sample_distance := _effective_road_bank_sample_distance()
 	var world_up := _world_up_in_builder_space()
 	var tangent := p_next - p_prev
+	# Match the road's wrapped tangent at an explicitly closed World Up seam.
+	if orientation_mode == 1 and length > 0.2 and curve.point_count > 2 \
+			and curve.get_point_position(0).is_equal_approx(curve.get_point_position(curve.point_count-1)) \
+			and (dist < 0.1 or dist > length-0.1):
+		var wrapped := fposmod(dist,length)
+		tangent = (builder_inverse*path_transform).basis * (curve.sample_baked(fposmod(wrapped+0.1,length),true) \
+			- curve.sample_baked(fposmod(wrapped-0.1,length),true))
 	if orientation_mode != 0:
 		tangent.y = 0.0
 	if tangent.length_squared() < 0.000001:

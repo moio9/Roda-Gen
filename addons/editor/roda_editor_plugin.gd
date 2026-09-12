@@ -30,6 +30,8 @@ func _enter_tree() -> void:
 		_run_editor_visual_tests.call_deferred()
 	if "--roda-prop-output-tests" in OS.get_cmdline_user_args():
 		_run_prop_output_tests.call_deferred()
+	if "--roda-terrain-startup-tests" in OS.get_cmdline_user_args():
+		_run_terrain_startup_tests.call_deferred()
 	if "--roda-topology-output-tests" in OS.get_cmdline_user_args():
 		_run_topology_output_tests.call_deferred()
 	if "--roda-incremental-workflow-tests" in OS.get_cmdline_user_args():
@@ -131,4 +133,9 @@ func _run_topology_output_tests() -> void:
 
 func _run_incremental_workflow_tests() -> void:
 	var tests: RefCounted = load("res://tools/check_incremental_workflow_editor.gd").new()
+	await tests.run(self)
+
+
+func _run_terrain_startup_tests() -> void:
+	var tests: RefCounted = load("res://tools/check_terrain_startup_selection.gd").new()
 	await tests.run(self)

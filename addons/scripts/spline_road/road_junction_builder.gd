@@ -13,6 +13,8 @@ var allow_endpoint_to_midpath := true
 var strip_shoulder_sidewalk_at_intersections := true
 var intersection_strip_length := 0.0
 var geometry_cache := preload("./road_junction_geometry_cache.gd").new()
+var contour := preload("./road_contour_junction.gd").new()
+var junction_geometry_mode := 0
 
 # Discovery consumes immutable position snapshots before welding mutates the
 # assembled geometry. Cache support contains positions in array order, never
@@ -38,6 +40,9 @@ func configure(source: Node) -> void:
 	allow_endpoint_to_midpath = source.get("allow_endpoint_to_midpath")
 	strip_shoulder_sidewalk_at_intersections = source.get("strip_shoulder_sidewalk_at_intersections")
 	intersection_strip_length = source.get("intersection_strip_length")
+	var mode: Variant = source.get("junction_geometry_mode")
+	junction_geometry_mode = int(mode) if mode != null else 0
+	contour.clear()
 	incremental_generation_enabled = bool(source.get("incremental_generation_enabled"))
 	_begin_query_build()
 	geometry_cache.begin_build(incremental_generation_enabled)
@@ -161,6 +166,12 @@ func weld_cluster(
 		return
 	var started := Time.get_ticks_usec()
 	var surfaces := [lane_indices, shoulder_indices, sidewalk_indices]
+	if junction_geometry_mode == 1:
+		if contour.build(_road, verts, normals, uvs, surfaces, sockets, cluster, path_rows):
+			geometry_cache.last_stats.clusters_rebuilt += 1
+			geometry_cache.last_stats.geometry_ms += float(Time.get_ticks_usec() - started) / 1000.0
+			return
+		push_warning("Contour junction kept legacy geometry: " + str(contour.reports.back().get("reason", "Unsupported cluster")))
 	var starts := PackedInt32Array([lane_indices.size(), shoulder_indices.size(), sidewalk_indices.size()])
 	var query: Dictionary = geometry_cache.make_query(self, verts, normals, uvs,
 		sockets, cluster, path_rows, path_weld_snap, path_weld_strip_enabled,

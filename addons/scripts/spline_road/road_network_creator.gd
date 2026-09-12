@@ -114,6 +114,14 @@ var terrain_fill_outer_padding := 0.0
 @export_range(0.0, 50.0, 0.1) var terrain_rect_fill_interior_point_step := 0.0
 @export_range(0.0, 2.0, 0.001) var terrain_rect_fill_road_margin := 0.0
 @export_group("Weld")
+## Contour mode retains complete road cross sections and builds separate corner bands.
+## Legacy is kept for existing scenes. Unsupported contour clusters fall back with diagnostics.
+@export_enum("Legacy", "Contour (Experimental)") var junction_geometry_mode := 0
+@export_range(0.0, 30.0, 0.25, "suffix:m") var junction_corner_radius := 6.0
+@export_range(2, 64, 1) var junction_corner_subdivisions := 16
+## 0 is a direct/chamfered connection; 1 is a quadratic rounded corner.
+## Intermediate values blend the two outlines. Values outside 0..1 are clamped.
+@export var junction_corner_profile: Curve
 @export_range(0.1, 30.0, 0.1) var endpoint_snap_distance := 2.0
 @export var allow_endpoint_to_midpath := true
 @export_range(2, 8, 1) var minimum_connections := 2
@@ -378,6 +386,7 @@ func get_source_rebuild_stats() -> Dictionary:
 	var stats := _path_sampler.last_stats.duplicate(true)
 	stats["junction_search"] = _junction_builder.last_stats.duplicate()
 	stats["junction_geometry"] = _junction_builder.geometry_cache.last_stats.duplicate(true)
+	stats["contour_junctions"] = _junction_builder.contour.reports.duplicate(true)
 	stats["surface_normals"] = _mesh_builder.normal_cache_stats.duplicate(true)
 	# The worker updates strip counters. Do not read its mutable Dictionary until
 	# its result has been joined, including the finished-but-not-yet-applied case.
@@ -734,10 +743,20 @@ func regenerate() -> void:
 			path_weld_strip_enabled, path_weld_strip_length, paths_with_mid_intersections,
 			invert_faces
 		)
+	if junction_geometry_mode == 1:
+		_junction_builder.contour.remove_retired_triangles(terrain_indices, _junction_builder.contour.removed_vertices)
+		_junction_builder.contour.remove_retired_triangles(wall_indices, _junction_builder.contour.removed_vertices)
+		for region in _junction_builder.contour.regions:
+			var path_id := int(region.path)
+			if not _marking_exclusions.has(path_id):
+				_marking_exclusions[path_id] = []
+			_marking_exclusions[path_id].append(Vector2(float(region.from), float(region.to)))
 
 	if strip_shoulder_sidewalk_at_intersections and not stripped_side_indices.is_empty():
 		shoulder_indices = _move_blocked_triangles_to_lane(shoulder_indices, lane_indices, stripped_side_indices)
 		sidewalk_indices = _move_blocked_triangles_to_lane(sidewalk_indices, lane_indices, stripped_side_indices)
+	if junction_geometry_mode == 1:
+		stripped_side_indices.merge(_junction_builder.contour.removed_vertices)
 
 	if lane_indices.is_empty() and shoulder_indices.is_empty() and sidewalk_indices.is_empty():
 		_append_lane_fallback_from_path_rows(lane_indices, path_rows)
@@ -3587,6 +3606,13 @@ func _build_signature() -> String:
 	parts.append(str(minimum_connections))
 	parts.append(str(strip_shoulder_sidewalk_at_intersections))
 	parts.append(str(intersection_strip_length))
+	parts.append(str(junction_geometry_mode))
+	parts.append(str(junction_corner_radius))
+	parts.append(str(junction_corner_subdivisions))
+	if junction_corner_profile != null:
+		for i in range(junction_corner_profile.point_count):
+			parts.append(str([junction_corner_profile.get_point_position(i),
+				junction_corner_profile.get_point_left_tangent(i), junction_corner_profile.get_point_right_tangent(i)]))
 	parts.append(str(adaptive_sampling_enabled))
 	parts.append(str(adaptive_sampling_advanced))
 	parts.append(str(adaptive_sampling_step_scale))

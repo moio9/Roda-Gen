@@ -23,6 +23,9 @@ MIT License
 
 ## Quick Start: Procedural Road Generator
 
+Experimental automatic corner geometry and editable profiles:
+[Contour junctions](addons/docs/junction_contours.md).
+
 New editable examples: [urban intersection](addons/scenes/examples/urban_intersection.tscn),
 [highway entry](addons/scenes/examples/highway_entry.tscn), and
 [canyon road](addons/scenes/examples/canyon_road.tscn).

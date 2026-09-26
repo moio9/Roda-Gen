@@ -51,8 +51,22 @@ class_name SplinePathProfile3D
 @export var terrain_right_profile_heights := PackedFloat32Array()
 @export_range(0.0, 200.0, 0.5) var terrain_profile_to_base_blend_distance := 30.0
 @export_range(0.1, 6.0, 0.01) var terrain_profile_power := 1.0
+@export_subgroup("Terrain Profile Continuation")
+## These side overrides work even when Terrain Height Profile Override is off.
+## Continue Last Height extends the final height instead of returning to base.
+@export_enum("Inherit:-1", "Return To Base:0", "Continue Last Height:1") var terrain_left_profile_continuation := -1
+@export_enum("Inherit:-1", "Return To Base:0", "Continue Last Height:1") var terrain_right_profile_continuation := -1
 
 @export_group("Weld")
+## Independent join channels shown as a layer grid in the Inspector. Two roads
+## can join when they share any checked bit; this does not affect physics.
+@export_flags_3d_physics var lateral_join_layers := 0
+## Nonempty matching groups opt source splines into lateral asphalt joining.
+## Legacy string channel for existing scenes. Sources must share a network.
+@export var lateral_join_group := ""
+## -1 inherits the network length, 0 disables the generated taper at this end.
+@export_range(-1.0, 200.0, 0.5, "suffix:m") var lateral_join_start_transition_length := -1.0
+@export_range(-1.0, 200.0, 0.5, "suffix:m") var lateral_join_end_transition_length := -1.0
 @export var intersection_override_enabled := false: set = _set_intersection_override_enabled
 @export_range(0.1, 30.0, 0.1) var weld_endpoint_snap_distance := 2.0
 @export var weld_allow_endpoint_to_midpath := true
@@ -751,6 +765,18 @@ func get_lane_extents_at_offset(offset: float) -> Vector2:
 	)
 
 
+func get_lateral_join_group() -> String:
+	return lateral_join_group
+
+
+func get_lateral_join_layers() -> int:
+	return lateral_join_layers
+
+
+func get_lateral_transition_length(at_end: bool) -> float:
+	return lateral_join_end_transition_length if at_end else lateral_join_start_transition_length
+
+
 func get_lane_extents_at_ratio(ratio: float) -> Vector2:
 	if curve == null:
 		var fallback_half := maxf(MIN_WIDTH, default_width) * 0.5
@@ -879,6 +905,8 @@ func get_edge_profile_signature() -> String:
 func get_terrain_height_profile_signature() -> String:
 	return "|".join([
 		str(terrain_height_profile_override_enabled),
+		str(terrain_left_profile_continuation),
+		str(terrain_right_profile_continuation),
 		str(terrain_left_profile_distances),
 		str(terrain_left_profile_heights),
 		str(terrain_right_profile_distances),
@@ -1060,6 +1088,13 @@ func get_terrain_height_profile_override() -> Dictionary:
 		"right_heights": terrain_right_profile_heights,
 		"to_base_blend_distance": maxf(0.0, terrain_profile_to_base_blend_distance),
 		"power": maxf(0.1, terrain_profile_power),
+	}
+
+
+func get_terrain_continuation_override() -> Dictionary:
+	return {
+		"left_continuation": terrain_left_profile_continuation,
+		"right_continuation": terrain_right_profile_continuation,
 	}
 
 
@@ -1845,6 +1880,8 @@ func _build_signature() -> String:
 	parts.append(str(terrain_left_width))
 	parts.append(str(terrain_right_width))
 	parts.append(str(terrain_height_profile_override_enabled))
+	parts.append(str(terrain_left_profile_continuation))
+	parts.append(str(terrain_right_profile_continuation))
 	parts.append(str(terrain_left_profile_distances))
 	parts.append(str(terrain_left_profile_heights))
 	parts.append(str(terrain_right_profile_distances))

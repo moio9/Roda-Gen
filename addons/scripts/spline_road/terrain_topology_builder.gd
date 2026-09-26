@@ -5,6 +5,7 @@ class_name TerrainTopologyBuilder3D
 signal terrain_generation_completed
 
 const DELAUNAY_GEOMETRY = preload("./delaunay_geometry.gd")
+const VERTICAL_UV_DIRECTION := Vector2(0.6, 0.8)
 
 # Practical terrain topology generator for spline roads in Godot 4.
 #
@@ -73,7 +74,8 @@ const DELAUNAY_GEOMETRY = preload("./delaunay_geometry.gd")
 @export_group("Road Cut")
 ## Adds support points just outside the road edge. Keep on when collars are off.
 @export var add_road_boundary_support_points := true
-@export var invert_faces := false
+## Godot's clockwise front-face convention requires inverted winding for the top.
+@export var invert_faces := true
 
 @export_group("Optional Collar")
 ## Builds explicit terrain strips from road edge to first terrain ring.
@@ -100,6 +102,10 @@ const DELAUNAY_GEOMETRY = preload("./delaunay_geometry.gd")
 @export var right_profile_distances := PackedFloat32Array([0.0, 5.0, 16.0, 35.0, 55.0])
 ## Heights paired with right_profile_distances.
 @export var right_profile_heights := PackedFloat32Array([0.0, -1.0, -7.0, -18.0, -18.0])
+## Continue Last Height keeps the last profile elevation out to terrain bounds,
+## or until another road's nearest-source region takes over. No extra splines.
+@export_enum("Return To Base", "Continue Last Height") var left_profile_continuation := 0
+@export_enum("Return To Base", "Continue Last Height") var right_profile_continuation := 0
 ## Distance used to blend the profile back to base_height past its last key.
 @export_range(0.0, 200.0, 0.5) var profile_to_base_blend_distance := 30.0
 @export_range(0.1, 6.0, 0.01) var profile_power := 1.0
@@ -122,14 +128,36 @@ const DELAUNAY_GEOMETRY = preload("./delaunay_geometry.gd")
 @export_range(0.1, 100.0, 0.1) var noise_fade_distance := 18.0
 @export var noise_seed := 1337
 
+@export_group("Rock Detail")
+## Adds lateral variation to the terrain profile and 3D rock relief. Off preserves existing terrain.
+@export var rock_detail_enabled := false
+## Horizontal displacement of profile contours, in meters. The XZ triangulation stays fixed.
+@export_range(0.0, 20.0, 0.1) var rock_lateral_amplitude := 5.0
+## Additional vertical relief, in meters.
+@export_range(0.0, 10.0, 0.1) var rock_height_amplitude := 1.2
+## Approximate size of rock formations. Smaller values need denser terrain sampling.
+@export_range(1.0, 100.0, 0.1) var rock_detail_scale := 12.0
+## Horizontal recess/protrusion of geological layers, in meters.
+@export_range(0.0, 5.0, 0.05) var rock_layer_amplitude := 0.65
+@export_range(0.5, 20.0, 0.1) var rock_layer_spacing := 3.5
+## Independent from broad terrain noise; uses its road distance fade for seam protection.
+@export var rock_detail_seed := 7341
+
 @export_group("Output")
 ## Reuse unchanged source queries; final surfaces are still assembled in order.
 @export var incremental_generation_enabled := false
 @export var terrain_material_override: Material
+## Include height in a continuous UV projection to reduce stretching on cliffs.
+## Some face orientations still stretch; use a triplanar material for those slopes.
+## Off preserves UVs in existing scenes; enable for mountainous terrain.
+@export var slope_aware_uvs := false
 ## Generates a trimesh collision body for the terrain mesh.
 @export var generate_collision := false
 ## Generates terrain automatically when running in editor/tool mode.
 @export var generate_in_editor := true
+## Rebuild terrain at runtime after the scene has entered the tree.
+## Leave off to use a saved mesh without regenerating it.
+@export var generate_on_ready := false
 @export var threaded_triangulation_enabled := true
 ## Center only Delaunay's calculation coordinates; output uses original sample positions.
 ## May avoid numerical overlaps, but can change diagonals. Off preserves legacy output.
@@ -192,6 +220,7 @@ const ROAD_MESH_FRAME_TANGENT_SAMPLE_DISTANCE := 0.1
 var _last_signature := ""
 var _pending_time := 0.0
 var _noise := FastNoiseLite.new()
+var _rock_noise := FastNoiseLite.new()
 var _tracked_noise: FastNoiseLite
 var _noise_input := PackedByteArray()
 var _active_height_modifiers: Array = []
@@ -223,6 +252,16 @@ var _road_edge_y_lookup: Dictionary = {}
 var _cached_road_signature := ""
 var _cached_road_data: Dictionary = {}
 var _active_generate_road_edge_collars := false
+var _final_road_surface = preload("./terrain_final_road_surface.gd").new()
+var _waiting_for_final_roads := false
+var _final_road_source_ids: Dictionary = {}
+# Live script reload can retain null when a newly added dependency initially
+# failed to compile. Recreate this transient helper on its first subsequent use.
+var _terrain_influences:
+	get:
+		if _terrain_influences == null:
+			_terrain_influences = preload("./topology_terrain_influences.gd").new()
+		return _terrain_influences
 var _source_cache = preload("./topology_stage_cache.gd").new()
 var _triangle_cache = preload("./topology_triangle_cache.gd").new()
 var _collar_cache = preload("./topology_collar_cache.gd").new()
@@ -243,14 +282,21 @@ var _output_published := false
 func _ready() -> void:
 	set_process(true)
 	_configure_noise()
-	if Engine.is_editor_hint() and generate_in_editor and not source_paths.is_empty():
+	if Engine.is_editor_hint() and generate_in_editor and _has_terrain_sources():
 		# The editor captures saved selections before entering the scene tree.
 		# Rebuilding here frees those nodes before EditorSelection restores them.
 		_regenerate_after_editor_ready.call_deferred()
+	elif not Engine.is_editor_hint() and generate_on_ready:
+		_regenerate_after_runtime_ready.call_deferred()
+
+
+func _regenerate_after_runtime_ready() -> void:
+	if is_inside_tree() and generate_on_ready and _has_terrain_sources():
+		regenerate()
 
 
 func _regenerate_after_editor_ready() -> void:
-	if not is_inside_tree() or not Engine.is_editor_hint() or not generate_in_editor or source_paths.is_empty():
+	if not is_inside_tree() or not Engine.is_editor_hint() or not generate_in_editor or not _has_terrain_sources():
 		return
 	if auto_regenerate_in_editor and _road_sources_pending():
 		return
@@ -275,6 +321,9 @@ func _exit_tree() -> void:
 func _process(delta: float) -> void:
 	_poll_triangulation_thread()
 	_process_mesh_build()
+	if _waiting_for_final_roads and not _road_sources_pending():
+		_waiting_for_final_roads = false
+		regenerate()
 	if not Engine.is_editor_hint():
 		return
 	if _is_generation_thread_active():
@@ -298,6 +347,7 @@ func _process(delta: float) -> void:
 
 
 func _clear_generated_from_button() -> void:
+	_waiting_for_final_roads = false
 	_path_cache.clear()
 	_mesh_stream.clear()
 	_point_cache.clear()
@@ -313,6 +363,12 @@ func regenerate() -> void:
 	if _is_generation_thread_active():
 		_triangulation_restart_requested = true
 		return
+	if _road_sources_pending():
+		_waiting_for_final_roads = true
+		return
+	_waiting_for_final_roads = false
+	_prepare_final_road_surface()
+	_terrain_influences.prepare(self)
 	_mesh_stream.clear()
 	var stage_start := Time.get_ticks_usec()
 	_stage_times = {}
@@ -328,10 +384,12 @@ func regenerate() -> void:
 
 	_log("VERSION: %s" % BUILDER_VERSION)
 	_active_height_modifiers = _collect_height_modifiers()
+	# Final-road clipping emits a variable number of triangles and is not
+	# covered by the path-only replay proofs. Use fresh source assembly.
 	# Modifiers receive this builder and road-info Dictionaries. Without a
 	# read-only dependency contract, their side effects cannot be replayed safely.
 	_source_cache.configure(incremental_generation_enabled and get_script().get_base_script() == null
-		and _active_height_modifiers.is_empty(), _source_cache_clear_requested)
+		and _active_height_modifiers.is_empty() and not _final_road_surface.active() and not _terrain_influences.active(), _source_cache_clear_requested)
 	_triangle_cache.configure(_source_cache.enabled, _source_cache_clear_requested)
 	_collar_cache.configure(_source_cache.enabled, _source_cache_clear_requested)
 	_point_cache.configure(_source_cache.enabled, _source_cache_clear_requested)
@@ -361,11 +419,12 @@ func regenerate() -> void:
 	# Inspector edits or modifier callbacks touching the persistent road cache.
 	stage_start = _time_stage("setup_ms", stage_start)
 	var road_data := _get_cached_road_data().duplicate(true)
+	_append_unresolved_path_masks(road_data)
 	var road_rows: Array = road_data.get("rows", [])
 	var road_segments: Array = road_data.get("segments", [])
 	var road_polygons: Array = road_data.get("polygons", [])
 	stage_start = _time_stage("road_data_ms", stage_start)
-	if road_rows.is_empty() or road_segments.is_empty():
+	if (road_rows.is_empty() or road_segments.is_empty()) and not _terrain_influences.active():
 		_log("No valid road paths found.")
 		_finish_generation_or_restart()
 		return
@@ -378,6 +437,8 @@ func regenerate() -> void:
 	_log("Road spatial index: %d segments, %d segment cells, %d road-edge cells, %d edge-y entries." % [road_segments.size(), _road_spatial_cells.size(), _road_edge_cells.size(), _road_edge_y_lookup.size()])
 
 	var bounds := _compute_bounds(road_polygons)
+	if bounds_mode == 0 and _terrain_influences.active():
+		bounds = bounds.merge(_terrain_influences.bounds)
 	if expand_bounds_for_modifiers and not _active_height_modifiers.is_empty():
 		bounds = _expand_bounds_for_height_modifiers(bounds, _active_height_modifiers)
 	_generation_point_budget = _resolve_generation_point_budget(bounds, road_data)
@@ -402,6 +463,9 @@ func regenerate() -> void:
 	if add_modifier_resolution_points and not _active_height_modifiers.is_empty():
 		_add_modifier_resolution_points_around_modifiers(points, point_keys, road_segments, _active_height_modifiers)
 		_log("Point stage modifier resolution: %d / %d" % [points.size(), point_limit])
+	for point: Vector2 in _terrain_influences.resolution_points:
+		if not _is_inside_road_mask(point, road_segments, road_clearance * 0.5):
+			_add_unique_point(points, point_keys, point)
 	_log("Point stage final: %d / %d" % [points.size(), point_limit])
 	stage_start = _time_stage("points_ms", stage_start)
 
@@ -907,6 +971,9 @@ func get_source_rebuild_stats() -> Dictionary:
 	result["point_groups"] = _point_cache.stats.duplicate(true)
 	result["mesh_stream"] = _mesh_stream.stats.duplicate()
 	result["path_samples"] = _path_cache.stats.duplicate(true)
+	result["terrain_influences"] = {"paths": _terrain_influences.strips.size(), "resolution_points": _terrain_influences.resolution_points.size()}
+	result["final_road_surface"] = {"active": _final_road_surface.active(),
+		"networks": _final_road_source_ids.size(), "triangles": _final_road_surface._cut._triangles.size()}
 	return result
 
 
@@ -918,6 +985,7 @@ func _time_stage(stage: String, started: int) -> int:
 
 func _collect_road_data() -> Dictionary:
 	_path_cache.begin_collection()
+	var path_sources: Array[NodePath] = []
 	var all_rows: Array = []
 	var all_segments: Array = []
 	var all_polygons: Array = []
@@ -925,7 +993,7 @@ func _collect_road_data() -> Dictionary:
 
 	for np in source_paths:
 		var node := get_node_or_null(np)
-		if node == null or not (node is Path3D):
+		if node == null or not (node is Path3D) or _terrain_influences.is_influence(node):
 			continue
 		var path := node as Path3D
 		var curve := path.curve
@@ -950,10 +1018,12 @@ func _collect_road_data() -> Dictionary:
 		all_polygons.append(data.polygon)
 		all_rows.append_array(data.rows)
 		all_segments.append_array(data.segments)
+		path_sources.append(np)
 		path_id += 1
 
 	return {
 		"rows": all_rows,
+		"path_sources": path_sources,
 		"segments": all_segments,
 		"polygons": all_polygons,
 	}
@@ -1256,6 +1326,8 @@ func _road_network_surface_frame(path: Path3D, distance: float, builder_inverse:
 
 
 func _resolve_road_network_for_path(path: Path3D) -> Node:
+	if _terrain_influences.is_influence(path):
+		return null
 	if not road_network_source.is_empty():
 		var explicit_network := get_node_or_null(road_network_source)
 		if explicit_network != null and explicit_network.has_method("get_path_surface_frame"):
@@ -1274,6 +1346,8 @@ func _default_terrain_height_profile() -> Dictionary:
 		"left_heights": left_profile_heights,
 		"right_distances": right_profile_distances,
 		"right_heights": right_profile_heights,
+		"left_continuation": left_profile_continuation,
+		"right_continuation": right_profile_continuation,
 		"to_base_blend_distance": profile_to_base_blend_distance,
 		"power": profile_power,
 	}
@@ -1281,6 +1355,14 @@ func _default_terrain_height_profile() -> Dictionary:
 
 func _resolve_path_terrain_height_profile(path: Path3D) -> Dictionary:
 	var fallback := _default_terrain_height_profile()
+	# Continuation is independent of the optional per-path height arrays.
+	# A spline can extend one side while inheriting all heights from the builder.
+	if path != null and path.has_method("get_terrain_continuation_override"):
+		var continuation: Dictionary = path.call("get_terrain_continuation_override")
+		for key in ["left_continuation", "right_continuation"]:
+			var mode := int(continuation.get(key, -1))
+			if mode >= 0:
+				fallback[key] = clampi(mode, 0, 1)
 	if path == null or not path.has_method("has_terrain_height_profile_override"):
 		return fallback
 	if not bool(path.call("has_terrain_height_profile_override")):
@@ -1304,6 +1386,8 @@ func _resolve_path_terrain_height_profile(path: Path3D) -> Dictionary:
 		"left_heights": left_heights,
 		"right_distances": right_distances,
 		"right_heights": right_heights,
+		"left_continuation": fallback.left_continuation,
+		"right_continuation": fallback.right_continuation,
 		"to_base_blend_distance": maxf(0.0, float(profile.get("to_base_blend_distance", profile_to_base_blend_distance))),
 		"power": maxf(0.1, float(profile.get("power", profile_power))),
 	}
@@ -1363,7 +1447,7 @@ func _resolve_generation_point_budget(bounds: Rect2, road_data: Dictionary) -> i
 
 	var required_base := road_boundary_estimate + near_estimate + bounds_estimate + far_grid_estimate
 	var modifier_room := int(ceil(float(required_base) * 0.15))
-	var target := maxi(200, required_base + modifier_room)
+	var target := maxi(200, required_base + modifier_room + _terrain_influences.resolution_points.size())
 	return mini(target, AUTO_POINT_BUDGET_HARD_CAP)
 
 
@@ -1449,6 +1533,10 @@ func _add_road_boundary_points(points: PackedVector2Array, point_keys: Dictionar
 		_resample_polygon_points(points, point_keys, poly, maxf(0.25, near_road_step), road_segments)
 		if add_road_boundary_support_points and not _active_generate_road_edge_collars:
 			_add_polygon_boundary_support_points(points, point_keys, poly, maxf(0.25, near_road_step), road_segments)
+
+	for triangle: Dictionary in _final_road_surface._cut._triangles:
+		for vertex: Vector3 in triangle.points:
+			_add_unique_point(points, point_keys, Vector2(vertex.x, vertex.z))
 
 
 func _add_near_road_points(points: PackedVector2Array, point_keys: Dictionary, road_data: Dictionary, road_segments: Array) -> void:
@@ -1895,7 +1983,7 @@ func _append_road_edge_collars(st: SurfaceTool, road_data: Dictionary, road_segm
 				if not cached.is_empty():
 					if not _mesh_stream.append_block(st, cached.vertices, cached.uvs):
 						for vertex_id in range(cached.vertices.size()):
-							_add_vertex(st, cached.vertices[vertex_id], cached.points[vertex_id])
+							_add_vertex(st, cached.vertices[vertex_id], cached.points[vertex_id], cached.uvs[vertex_id])
 					triangle_count += int(cached.triangles)
 				else:
 					_collar_cache.begin(key, input, _source_cache)
@@ -2037,55 +2125,87 @@ func _collar_triangle_is_safe(a: Vector2, b: Vector2, c: Vector2) -> bool:
 
 
 func _add_oriented_topology_triangle(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, a2: Vector2, b2: Vector2, c2: Vector2) -> int:
+	if _final_road_surface.active():
+		var count := 0
+		for triangle in _final_road_surface._cut.subtract(a, b, c):
+			var aa: Vector3 = _final_road_surface._fit_seam(triangle[0])
+			var bb: Vector3 = _final_road_surface._fit_seam(triangle[1])
+			var cc: Vector3 = _final_road_surface._fit_seam(triangle[2])
+			count += _add_oriented_topology_triangle_raw(st, aa, bb, cc, Vector2(aa.x, aa.z), Vector2(bb.x, bb.z), Vector2(cc.x, cc.z))
+		return count
+	return _add_oriented_topology_triangle_raw(st, a, b, c, a2, b2, c2)
+
+func _add_oriented_topology_triangle_raw(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, a2: Vector2, b2: Vector2, c2: Vector2) -> int:
 	var normal_y := (b - a).cross(c - a).y
 	if absf(normal_y) <= EPS:
 		return 0
 	var flip := normal_y < 0.0
 	if invert_faces:
 		flip = not flip
+	var triangle_uvs := _terrain_triangle_uvs(a, b, c, a2, b2, c2)
 	if flip:
-		_add_vertex(st, c, c2)
-		_add_vertex(st, b, b2)
-		_add_vertex(st, a, a2)
+		_add_vertex(st, c, c2, triangle_uvs[2])
+		_add_vertex(st, b, b2, triangle_uvs[1])
+		_add_vertex(st, a, a2, triangle_uvs[0])
 	else:
-		_add_vertex(st, a, a2)
-		_add_vertex(st, b, b2)
-		_add_vertex(st, c, c2)
+		_add_vertex(st, a, a2, triangle_uvs[0])
+		_add_vertex(st, b, b2, triangle_uvs[1])
+		_add_vertex(st, c, c2, triangle_uvs[2])
 	return 1
 
 
 func _add_terrain_triangle(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, a2: Vector2, b2: Vector2, c2: Vector2) -> void:
-	# Every generated terrain triangle represents the upper surface. Its winding
-	# must therefore have a positive Y component before normals are generated.
-	# Delaunay can return the opposite 2D winding, which otherwise becomes a
-	# down-facing, unlit patch after SurfaceTool.generate_normals().
+	if _final_road_surface.active():
+		for triangle in _final_road_surface._cut.subtract(a, b, c):
+			var aa: Vector3 = _final_road_surface._fit_seam(triangle[0])
+			var bb: Vector3 = _final_road_surface._fit_seam(triangle[1])
+			var cc: Vector3 = _final_road_surface._fit_seam(triangle[2])
+			_add_terrain_triangle_raw(st, aa, bb, cc, Vector2(aa.x, aa.z), Vector2(bb.x, bb.z), Vector2(cc.x, cc.z))
+		return
+	_add_terrain_triangle_raw(st, a, b, c, a2, b2, c2)
+
+func _add_terrain_triangle_raw(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, a2: Vector2, b2: Vector2, c2: Vector2) -> void:
+	# Godot displays clockwise front faces and SurfaceTool follows the winding
+	# when it generates normals. The default inverted winding faces up in Godot.
 	var flip := (b - a).cross(c - a).y < 0.0
 	if flip:
 		_normal_winding_fixes += 1
 	if invert_faces:
 		flip = not flip
+	var triangle_uvs := _terrain_triangle_uvs(a, b, c, a2, b2, c2)
 	if _mesh_stream.target != null and not _collar_cache.recording:
-		if _mesh_stream.append_triangle(st, a, b, c, a2, b2, c2, flip):
+		if _mesh_stream.append_triangle(st, a, b, c, triangle_uvs[0], triangle_uvs[1], triangle_uvs[2], flip):
 			return
 	if flip:
-		_add_vertex(st, c, c2)
-		_add_vertex(st, b, b2)
-		_add_vertex(st, a, a2)
+		_add_vertex(st, c, c2, triangle_uvs[2])
+		_add_vertex(st, b, b2, triangle_uvs[1])
+		_add_vertex(st, a, a2, triangle_uvs[0])
 	else:
-		_add_vertex(st, a, a2)
-		_add_vertex(st, b, b2)
-		_add_vertex(st, c, c2)
+		_add_vertex(st, a, a2, triangle_uvs[0])
+		_add_vertex(st, b, b2, triangle_uvs[1])
+		_add_vertex(st, c, c2, triangle_uvs[2])
 
 
 
-func _add_vertex(st: SurfaceTool, v: Vector3, p2: Vector2) -> void:
-	var uv := Vector2(p2.x * 0.05, p2.y * 0.05)
+func _add_vertex(st: SurfaceTool, v: Vector3, p2: Vector2, override_uv := Vector2.INF) -> void:
+	var uv := Vector2(p2.x * 0.05, p2.y * 0.05) if override_uv == Vector2.INF else override_uv
 	if _collar_cache.recording:
 		_collar_cache.capture_vertex(v, p2, uv)
 	if _mesh_stream.target != null and _mesh_stream.append_vertex(st, v, uv):
 		return
 	st.set_uv(uv)
 	st.add_vertex(v)
+
+
+func _terrain_triangle_uvs(a: Vector3, b: Vector3, c: Vector3,
+		a2: Vector2, b2: Vector2, c2: Vector2) -> Array[Vector2]:
+	if not slope_aware_uvs:
+		return [a2 * 0.05, b2 * 0.05, c2 * 0.05]
+	# Every triangle and chunk shares the same affine projection, so adjacent
+	# faces cannot disagree about the UV at a common vertex.
+	return [(a2 + VERTICAL_UV_DIRECTION * a.y) * 0.05,
+		(b2 + VERTICAL_UV_DIRECTION * b.y) * 0.05,
+		(c2 + VERTICAL_UV_DIRECTION * c.y) * 0.05]
 
 
 func _point_to_vertex(p: Vector2, road_segments: Array) -> Vector3:
@@ -2119,14 +2239,14 @@ func _road_sources_pending() -> bool:
 
 
 func is_terrain_generation_pending() -> bool:
-	return _is_generation_thread_active() or (Engine.is_editor_hint() and auto_regenerate_in_editor \
+	return _waiting_for_final_roads or _is_generation_thread_active() or (Engine.is_editor_hint() and auto_regenerate_in_editor \
 		and _last_signature != _build_signature())
 
 
 ## Built-in idle height queries are value-only. Modifier/subclass callbacks
 ## require their full lifecycle until they expose a read-only dependency contract.
 func supports_terrain_placement_cache() -> bool:
-	return not is_terrain_generation_pending() and get_script().get_base_script() == null and _active_height_modifiers.is_empty()
+	return not is_terrain_generation_pending() and not _final_road_surface.active() and not _terrain_influences.active() and get_script().get_base_script() == null and _active_height_modifiers.is_empty()
 
 
 ## Samples the generated terrain function directly, without requiring a physics collider.
@@ -2138,7 +2258,7 @@ func get_terrain_height_at_world(world_position: Vector3) -> Dictionary:
 	var local_position := to_local(world_position)
 	var road_data := _get_cached_road_data()
 	var road_segments: Array = road_data.get("segments", [])
-	if road_segments.is_empty():
+	if road_segments.is_empty() and not _terrain_influences.active():
 		return {}
 	if _road_spatial_cells.is_empty():
 		_build_road_spatial_index(road_segments, road_data.get("polygons", []))
@@ -2166,6 +2286,12 @@ func _sample_terrain_normal_local(p: Vector2, road_segments: Array) -> Vector3:
 
 
 func _sample_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
+	var height := _sample_path_height_from_road_info(p, nearest)
+	if _final_road_surface.active():
+		return _final_road_surface._fit(Vector3(p.x, height, p.y)).y
+	return height
+
+func _sample_path_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
 	if not _source_cache.enabled or not _active_height_modifiers.is_empty():
 		if _source_cache.stats.has("heights_rebuilt"):
 			_source_cache.stats.heights_rebuilt += 1
@@ -2176,7 +2302,7 @@ func _sample_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
 		base_height, y_offset, _default_terrain_height_profile(), lock_height_to_road_edge,
 		road_clearance, road_edge_height_snap_distance, road_edge_height_blend_distance, terrain_edge_y_offset,
 		noise_enabled, noise_amplitude, noise_start_distance_from_road, noise_fade_distance,
-		_noise_parameters()])
+		_noise_parameters(), _rock_detail_settings()])
 	var cached: Dictionary = _source_cache.lookup(query)
 	if not cached.is_empty():
 		_source_cache.stats.heights_reused += 1
@@ -2189,7 +2315,7 @@ func _sample_height_from_road_info(p: Vector2, nearest: Dictionary) -> float:
 
 func _sample_height_from_road_info_uncached(p: Vector2, nearest: Dictionary) -> float:
 	if nearest.is_empty():
-		return base_height + _sample_noise(p, 999.0)
+		return _terrain_influences.sample_height(p, base_height + _sample_noise(p, 999.0))
 
 	var edge_d := maxf(0.0, float(nearest.get("edge_distance", 0.0)))
 	var side := int(nearest.get("side", 1))
@@ -2214,6 +2340,11 @@ func _sample_height_from_road_info_uncached(p: Vector2, nearest: Dictionary) -> 
 	else:
 		profile_h = _sample_profile(right_distances, right_heights, edge_d)
 
+	if rock_detail_enabled:
+		profile_h = _sample_rock_profile(p, edge_d, road_y, profile_h,
+			left_distances if side >= 0 else right_distances,
+			left_heights if side >= 0 else right_heights)
+
 	if not is_equal_approx(profile_power_for_road, 1.0):
 		var sign_v := signf(profile_h)
 		profile_h = sign_v * pow(absf(profile_h), profile_power_for_road)
@@ -2221,12 +2352,16 @@ func _sample_height_from_road_info_uncached(p: Vector2, nearest: Dictionary) -> 
 	var y := road_y + profile_h
 
 	var max_profile_dist := _profile_max_distance(left_distances if side >= 0 else right_distances)
-	if profile_blend_distance > 0.001 and edge_d > max_profile_dist:
+	var continuation := int(profile.get("left_continuation" if side >= 0 else "right_continuation",
+		left_profile_continuation if side >= 0 else right_profile_continuation))
+	if continuation == 0 and profile_blend_distance > 0.001 and edge_d > max_profile_dist:
 		var t := clampf((edge_d - max_profile_dist) / profile_blend_distance, 0.0, 1.0)
 		t = t * t * (3.0 - 2.0 * t)
 		y = lerpf(y, base_height, t)
 
 	y += _sample_noise(p, edge_d)
+	if _terrain_influences.active():
+		y = _terrain_influences.sample_height(p, y, float(nearest.get("center_distance", INF)))
 	y = _apply_height_modifiers(p, y, nearest)
 
 	if lock_height_to_road_edge:
@@ -2288,6 +2423,36 @@ func _configure_noise() -> void:
 	_noise.fractal_octaves = 3
 	_noise.fractal_gain = 0.45
 	_noise.fractal_lacunarity = 2.0
+	_rock_noise.seed = rock_detail_seed
+	_rock_noise.frequency = 1.0 / maxf(1.0, rock_detail_scale)
+	_rock_noise.fractal_octaves = 3
+	_rock_noise.fractal_gain = 0.45
+	_rock_noise.fractal_lacunarity = 2.0
+
+
+func _rock_detail_settings() -> Array:
+	return [rock_detail_enabled, rock_lateral_amplitude, rock_height_amplitude,
+		rock_detail_scale, rock_layer_amplitude, rock_layer_spacing, rock_detail_seed]
+
+
+func _sample_rock_profile(p: Vector2, edge_d: float, road_y: float, profile_h: float,
+		distances: PackedFloat32Array, heights: PackedFloat32Array) -> float:
+	# Domain-warp the cross section instead of moving triangulation vertices:
+	# contours move laterally, while collision, road cuts and height queries
+	# still share a single-valued surface without folded/overlapping triangles.
+	var start := maxf(0.0, noise_start_distance_from_road)
+	if lock_height_to_road_edge:
+		start = maxf(start, maxf(road_clearance, road_edge_height_snap_distance) + road_edge_height_blend_distance)
+	var fade := smoothstep(start, start + maxf(0.001, noise_fade_distance), edge_d)
+	if fade <= 0.0:
+		return profile_h
+	var elevation := road_y + profile_h
+	var formation := _rock_noise.get_noise_3d(p.x, elevation, p.y)
+	var layers := sin(elevation * TAU / maxf(0.5, rock_layer_spacing) + formation * 1.5)
+	var offset := (formation * rock_lateral_amplitude + layers * rock_layer_amplitude) * fade
+	var warped := _sample_profile(distances, heights, maxf(0.0, edge_d + offset))
+	var relief := _rock_noise.get_noise_3d(p.x * 2.7 + 193.0, elevation * 2.7, p.y * 2.7 - 71.0)
+	return warped + relief * rock_height_amplitude * fade
 
 
 func _noise_parameters() -> PackedByteArray:
@@ -2316,7 +2481,8 @@ func _triangle_cache_settings() -> PackedByteArray:
 	return var_to_bytes([base_height, y_offset, _default_terrain_height_profile(), lock_height_to_road_edge,
 		road_clearance, road_edge_height_snap_distance, road_edge_height_blend_distance, terrain_edge_y_offset,
 		noise_enabled, noise_amplitude, noise_start_distance_from_road, noise_fade_distance, _noise_parameters(),
-		road_interior_reject_margin, fallback_road_width, _road_spatial_cell_size,
+		_rock_detail_settings(),
+		road_interior_reject_margin, fallback_road_width, _road_spatial_cell_size, slope_aware_uvs,
 		_active_generate_road_edge_collars])
 
 
@@ -2333,6 +2499,9 @@ func _is_valid_triangle_2d(a: Vector2, b: Vector2, c: Vector2, a_road_info: Dict
 	var area := absf(_cross2(b - a, c - a)) * 0.5
 	if area < MIN_TRIANGLE_AREA_XZ:
 		return _reject_triangle("area")
+
+	if _final_road_surface.active():
+		return true # Exact final-road subtraction replaces whole-triangle rejection.
 
 	var tri_clearance := road_clearance
 	if SEPARATE_TRIANGLE_ROAD_CLEARANCE:
@@ -2624,51 +2793,78 @@ func _nearest_road_info_spatial_uncached(p: Vector2, road_segments: Array, trace
 	var center_cell_x := floori(p.x / cell_size)
 	var center_cell_z := floori(p.y / cell_size)
 	var ring := 0
+	# Modifier-expanded terrain can be kilometres outside a tiny road index.
+	# With source replay disabled, visit occupied cells directly in the same
+	# (ring, x, z) order instead of walking millions of empty grid positions.
+	var sparse_order: Array[Vector3i] = []
+	if not _source_cache.enabled and _road_spatial_cells.size() <= 64:
+		for cell: Vector2i in _road_spatial_cells:
+			sparse_order.append(Vector3i(maxi(absi(cell.x - center_cell_x), absi(cell.y - center_cell_z)), cell.x, cell.y))
+		sparse_order.sort_custom(func(a: Vector3i, b: Vector3i):
+			return a.x < b.x if a.x != b.x else (a.y < b.y if a.y != b.y else a.z < b.z))
+	var sparse_cursor := 0
 
 	while true:
+		if not sparse_order.is_empty():
+			if sparse_cursor >= sparse_order.size():
+				return best_info
+			ring = sparse_order[sparse_cursor].x
 		var min_cell_x := center_cell_x - ring
 		var min_cell_z := center_cell_z - ring
 		var max_cell_x := center_cell_x + ring
 		var max_cell_z := center_cell_z + ring
-		for x in range(min_cell_x, max_cell_x + 1):
-			for z in range(min_cell_z, max_cell_z + 1):
-				if ring > 0 and x != min_cell_x and x != max_cell_x and z != min_cell_z and z != max_cell_z:
+		var ring_cells: Array[Vector2i] = []
+		if not sparse_order.is_empty():
+			while sparse_cursor < sparse_order.size() and sparse_order[sparse_cursor].x == ring:
+				var entry := sparse_order[sparse_cursor]
+				ring_cells.append(Vector2i(entry.y, entry.z))
+				sparse_cursor += 1
+		else:
+			# Enumerate the perimeter directly; preserve x-then-z tie ordering.
+			for x in range(min_cell_x, max_cell_x + 1):
+				if x == min_cell_x or x == max_cell_x:
+					for z in range(min_cell_z, max_cell_z + 1):
+						ring_cells.append(Vector2i(x, z))
+				else:
+					ring_cells.append(Vector2i(x, min_cell_z))
+					if min_cell_z != max_cell_z:
+						ring_cells.append(Vector2i(x, max_cell_z))
+		for cell in ring_cells:
+			var segment_indices = _road_spatial_cells.get(cell, null)
+			if segment_indices == null:
+				continue
+			for segment_index in segment_indices:
+				if tested.has(segment_index):
 					continue
-				var segment_indices = _road_spatial_cells.get(Vector2i(x, z), null)
-				if segment_indices == null:
+				tested[segment_index] = true
+				if _source_cache.stats.has("distance_tests"):
+					_source_cache.stats.distance_tests += 1
+				var segment: Dictionary = road_segments[segment_index]
+				var a: Vector2 = segment.get("a", Vector2.ZERO)
+				var b: Vector2 = segment.get("b", Vector2.ZERO)
+				var ab: Vector2 = segment.get("ab", b - a)
+				var len2 := float(segment.get("len2", ab.length_squared()))
+				if len2 < 0.000001:
 					continue
-				for segment_index in segment_indices:
-					if tested.has(segment_index):
-						continue
-					tested[segment_index] = true
-					if _source_cache.stats.has("distance_tests"):
-						_source_cache.stats.distance_tests += 1
-					var segment: Dictionary = road_segments[segment_index]
-					var a: Vector2 = segment.get("a", Vector2.ZERO)
-					var b: Vector2 = segment.get("b", Vector2.ZERO)
-					var ab: Vector2 = segment.get("ab", b - a)
-					var len2 := float(segment.get("len2", ab.length_squared()))
-					if len2 < 0.000001:
-						continue
-					var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
-					var q := a + ab * t
-					var center_dist := p.distance_to(q)
-					var width := lerpf(float(segment.get("wa", fallback_road_width)), float(segment.get("wb", fallback_road_width)), t)
-					var side := _road_side_for_segment(segment, p, q)
-					var edge_dist := center_dist - _segment_half_xz(segment, t, side)
-					if edge_dist < best:
-						best = edge_dist
-						best_info = {
-							"center": q,
-							"center_distance": center_dist,
-							"edge_distance": edge_dist,
-							"side": side,
-							"road_y": _sample_segment_surface_y(segment, p, q, t, side),
-							"width": width,
-							"t": t,
-							"path_id": int(segment.get("path_id", -1)),
-							"terrain_profile": segment.get("terrain_profile", _default_terrain_height_profile()),
-						}
+				var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+				var q := a + ab * t
+				var center_dist := p.distance_to(q)
+				var width := lerpf(float(segment.get("wa", fallback_road_width)), float(segment.get("wb", fallback_road_width)), t)
+				var side := _road_side_for_segment(segment, p, q)
+				var edge_dist := center_dist - _segment_half_xz(segment, t, side)
+				if edge_dist < best:
+					best = edge_dist
+					best_info = {
+						"center": q,
+						"center_distance": center_dist,
+						"edge_distance": edge_dist,
+						"side": side,
+						"road_y": _sample_segment_surface_y(segment, p, q, t, side),
+						"width": width,
+						"t": t,
+						"path_id": int(segment.get("path_id", -1)),
+						"terrain_profile": segment.get("terrain_profile", _default_terrain_height_profile()),
+					}
 
 		if best == INF and tested.size() == road_segments.size():
 			# All indexed sources may have degenerate XZ projections. Expanding
@@ -2786,6 +2982,8 @@ func _build_signature() -> String:
 	var parts: Array[String] = []
 	parts.append(str(incremental_generation_enabled))
 	parts.append(_build_road_signature())
+	parts.append(_final_road_signature())
+	parts.append(_terrain_influences.get_signature(self))
 	parts.append(str(bounds_mode))
 	parts.append(str(auto_outer_padding))
 	parts.append(str(manual_center_xz))
@@ -2804,6 +3002,8 @@ func _build_signature() -> String:
 	parts.append(str(left_profile_heights))
 	parts.append(str(right_profile_distances))
 	parts.append(str(right_profile_heights))
+	parts.append(str(left_profile_continuation))
+	parts.append(str(right_profile_continuation))
 	parts.append(str(profile_to_base_blend_distance))
 	parts.append(str(profile_power))
 	parts.append(str(base_height))
@@ -2816,12 +3016,14 @@ func _build_signature() -> String:
 	parts.append(str(local_triangulation_enabled))
 	parts.append(str(output_mode))
 	parts.append(str(output_chunk_size))
+	parts.append(str(slope_aware_uvs))
 	parts.append(str(noise_enabled))
 	parts.append(str(noise_amplitude))
 	parts.append(str(noise_frequency))
 	parts.append(str(noise_start_distance_from_road))
 	parts.append(str(noise_fade_distance))
 	parts.append(str(noise_seed))
+	parts.append(str(_rock_detail_settings()))
 	parts.append(str(height_modifiers))
 	parts.append(str(auto_find_height_modifiers))
 	parts.append(str(add_modifier_resolution_points))
@@ -2882,6 +3084,10 @@ func _build_road_signature() -> String:
 				parts.append(str(n.call("get_width_profile_signature")))
 			if n.has_method("get_edge_profile_signature"):
 				parts.append(str(n.call("get_edge_profile_signature")))
+			if _terrain_influences.is_influence(n):
+				parts.append(n.get_terrain_influence_width_profile_signature())
+				parts.append(n.get_terrain_influence_profile_signature())
+				parts.append(str([n.influence_blend, n.influence_strength, n.influence_band_count]))
 			if n.has_method("get_terrain_height_profile_signature"):
 				parts.append(str(n.call("get_terrain_height_profile_signature")))
 	return "|".join(parts)
@@ -2890,3 +3096,60 @@ func _build_road_signature() -> String:
 func _log(message: String) -> void:
 	if debug_logs:
 		print("[TerrainTopologyBuilder3D] ", message)
+
+
+func _final_road_networks() -> Array:
+	var networks: Array = []
+	for np: NodePath in source_paths:
+		var path := get_node_or_null(np) as Path3D
+		if path == null:
+			continue
+		var network := _resolve_road_network_for_path(path)
+		if network != null and network.has_method("get_terrain_surface_data") and not networks.has(network):
+			networks.append(network)
+	return networks
+
+func _prepare_final_road_surface() -> void:
+	_final_road_surface.configure(self)
+	_final_road_source_ids.clear()
+	for network: Node3D in _final_road_networks():
+		var data: Dictionary = network.get_terrain_surface_data()
+		if not data.is_empty() and not data.indices.is_empty():
+			_final_road_source_ids[network.get_instance_id()] = true
+			_final_road_surface._cut.append_surface(data.vertices, data.indices,
+				global_transform.affine_inverse() * network.global_transform)
+
+func _final_road_signature() -> String:
+	var parts: Array = []
+	for network: Node3D in _final_road_networks():
+		parts.append([network.get_instance_id(), network.get_terrain_surface_revision(), network.global_transform])
+	return str(parts)
+
+
+## Mixed sources still need a cut for paths outside completed road networks.
+func _append_unresolved_path_masks(data: Dictionary) -> void:
+	if not _final_road_surface.active():
+		return
+	var unresolved: Dictionary = {}
+	var sources: Array = data.get("path_sources", [])
+	for id in range(sources.size()):
+		var path := get_node_or_null(sources[id]) as Path3D
+		var network := _resolve_road_network_for_path(path) if path != null else null
+		if network == null or not _final_road_source_ids.has(network.get_instance_id()):
+			unresolved[id] = true
+	var rows: Array = data.get("rows", [])
+	for i in range(rows.size() - 1):
+		var a: Dictionary = rows[i]
+		var b: Dictionary = rows[i + 1]
+		if a.path_id != b.path_id or not unresolved.has(a.path_id):
+			continue
+		var vertices := PackedVector3Array([
+			Vector3(a.left2.x, a.left_y, a.left2.y),
+			Vector3(a.right_edge2.x, a.right_edge_y, a.right_edge2.y),
+			Vector3(b.left2.x, b.left_y, b.left2.y),
+			Vector3(b.right_edge2.x, b.right_edge_y, b.right_edge2.y)])
+		_final_road_surface._cut.append_surface(vertices, PackedInt32Array([0, 1, 2, 1, 3, 2]), Transform3D.IDENTITY)
+
+
+func _has_terrain_sources() -> bool:
+	return not source_paths.is_empty() or not _terrain_influences.collect_paths(self).is_empty()

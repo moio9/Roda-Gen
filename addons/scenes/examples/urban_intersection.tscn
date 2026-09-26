@@ -1,15 +1,10 @@
 [gd_scene format=3]
 
-[ext_resource type="Script" path="example_junction.gd" id="connector"]
-
-[ext_resource type="Script" path="example_scene.gd" id="example"]
-
 [ext_resource type="Script" path="../../scripts/spline_road/road_network_creator.gd" id="road"]
 [ext_resource type="Script" path="../../scripts/spline_road/spline_path_profile.gd" id="profile"]
 [ext_resource type="Script" path="../../scripts/spline_road/terrain_topology_builder.gd" id="terrain"]
 [ext_resource type="Script" path="../../scripts/spline_road/spline_prop_array.gd" id="props"]
-[ext_resource type="Script" path="../../scripts/spline_road/spline_mesh_deformer.gd" id="deformer"]
-[ext_resource type="Script" path="example_camera.gd" id="camera"]
+[ext_resource type="Script" path="../../scripts/orbit_camera.gd" id="camera"]
 
 [sub_resource type="StandardMaterial3D" id="asphalt"]
 albedo_color = Color(0.075, 0.085, 0.10, 1)
@@ -53,28 +48,28 @@ ambient_light_energy = 0.7
 
 [sub_resource type="Curve3D" id="North"]
 _data = {
-"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, -14, 0, 0, 0, 0, 0, 0, 0, 0, -85),
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -85),
 "tilts": PackedFloat32Array(0, 0)
 }
 point_count = 2
 
 [sub_resource type="Curve3D" id="South"]
 _data = {
-"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 85),
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85),
 "tilts": PackedFloat32Array(0, 0)
 }
 point_count = 2
 
 [sub_resource type="Curve3D" id="East"]
 _data = {
-"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 85, 0, 0),
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 0, 0),
 "tilts": PackedFloat32Array(0, 0)
 }
 point_count = 2
 
 [sub_resource type="Curve3D" id="West"]
 _data = {
-"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -14, 0, 0, 0, 0, 0, 0, 0, 0, -85, 0, 0),
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -85, 0, 0),
 "tilts": PackedFloat32Array(0, 0)
 }
 point_count = 2
@@ -95,8 +90,38 @@ material = SubResource("sidewalk")
 size = Vector3(22, 8, 28)
 material = SubResource("sidewalk")
 
+[sub_resource type="BoxMesh" id="crosswalk_stripe"]
+size = Vector3(2.5, 0.015, 0.45)
+
+[sub_resource type="Curve3D" id="Crosswalk_North"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -2.925, 0, 0, 0, 0, 0, 0, 0, 0, 2.925, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="Crosswalk_South"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -2.925, 0, 0, 0, 0, 0, 0, 0, 0, 2.925, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="Crosswalk_East"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -2.925, 0, 0, 0, 0, 0, 0, 0, 0, 2.925, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
+[sub_resource type="Curve3D" id="Crosswalk_West"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -2.925, 0, 0, 0, 0, 0, 0, 0, 0, 2.925, 0, 0),
+"tilts": PackedFloat32Array(0, 0)
+}
+point_count = 2
+
 [node name="urban_intersection" type="Node3D"]
-script = ExtResource("example")
 
 [node name="GroundSupport" type="MeshInstance3D" parent="."]
 position = Vector3(0, -0.16, 0)
@@ -119,7 +144,7 @@ far = 1600.0
 fov = 58.0
 script = ExtResource("camera")
 focus = Vector3(0, 0, 0)
-example_title = "URBAN / Four-way intersection"
+title = "URBAN / Four-way intersection"
 
 [node name="Road" type="Node3D" parent="."]
 script = ExtResource("road")
@@ -129,7 +154,9 @@ sidewalk_material_override = SubResource("sidewalk")
 sample_step = 1.5
 invert_faces = true
 allow_endpoint_to_midpath = false
-intersection_strip_length = 10.0
+junction_geometry_mode = 1
+junction_corner_radius = 6.0
+junction_corner_subdivisions = 24
 adaptive_sampling_enabled = false
 incremental_generation_enabled = true
 markings_enabled = true
@@ -201,6 +228,7 @@ show_width_preview = false
 
 [node name="Terrain" type="Node3D" parent="."]
 script = ExtResource("terrain")
+generate_on_ready = true
 source_paths = Array[NodePath]([NodePath("../Road/North"), NodePath("../Road/South"), NodePath("../Road/East"), NodePath("../Road/West")])
 road_network_source = NodePath("../Road")
 path_sample_step = 3.0
@@ -256,9 +284,35 @@ mesh = SubResource("building2")
 position = Vector3(32, 4, -32)
 mesh = SubResource("building3")
 
-[node name="Intersection" type="MeshInstance3D" parent="."]
-script = ExtResource("connector")
-layout = 0
-asphalt = SubResource("asphalt")
-sidewalk = SubResource("sidewalk")
-paint = SubResource("paint")
+[node name="Crosswalks" type="Node3D" parent="."]
+script = ExtResource("props")
+source_paths = Array[NodePath]([NodePath("North"), NodePath("South"), NodePath("East"), NodePath("West")])
+item_mesh = SubResource("crosswalk_stripe")
+item_material_override = SubResource("paint")
+mesh_cast_shadows = 0
+spacing = 0.9
+start_offset = 0.225
+end_trim = 0.225
+vertical_offset = 0.025
+avoid_intersections = false
+ranges_mode = 0
+
+[node name="North" type="Path3D" parent="Crosswalks"]
+position = Vector3(0, 0, -12)
+rotation = Vector3(0, 0, 0)
+curve = SubResource("Crosswalk_North")
+
+[node name="South" type="Path3D" parent="Crosswalks"]
+position = Vector3(0, 0, 12)
+rotation = Vector3(0, 0, 0)
+curve = SubResource("Crosswalk_South")
+
+[node name="East" type="Path3D" parent="Crosswalks"]
+position = Vector3(12, 0, 0)
+rotation = Vector3(0, 1.570796327, 0)
+curve = SubResource("Crosswalk_East")
+
+[node name="West" type="Path3D" parent="Crosswalks"]
+position = Vector3(-12, 0, 0)
+rotation = Vector3(0, 1.570796327, 0)
+curve = SubResource("Crosswalk_West")

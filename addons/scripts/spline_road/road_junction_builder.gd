@@ -4,6 +4,7 @@ extends RefCounted
 ## Configuration is captured before a generation job; the coordinator owns scene nodes.
 
 var _road: Node
+var _lateral_join: RefCounted
 const STRIP_SIDE_BOTH := 0
 const STRIP_SIDE_LEFT := -1
 const STRIP_SIDE_RIGHT := 1
@@ -35,6 +36,7 @@ var _discovery_snapshots_ready := false
 
 func configure(source: Node) -> void:
 	_road = source
+	_lateral_join = source.get("_lateral_join")
 	sample_step = source.get("sample_step")
 	endpoint_snap_distance = source.get("endpoint_snap_distance")
 	allow_endpoint_to_midpath = source.get("allow_endpoint_to_midpath")
@@ -46,6 +48,10 @@ func configure(source: Node) -> void:
 	incremental_generation_enabled = bool(source.get("incremental_generation_enabled"))
 	_begin_query_build()
 	geometry_cache.begin_build(incremental_generation_enabled)
+
+
+func _owns_lateral_pair(a: Dictionary, b: Dictionary) -> bool:
+	return _lateral_join != null and _lateral_join.owns_junction_pair(a,b)
 
 
 func clear_cache() -> void:
@@ -1028,6 +1034,8 @@ func _augment_with_midpath_sockets(
 			if nearest_idx < 0:
 				continue
 
+			if _owns_lateral_pair(ep, rows[nearest_idx]):
+				continue
 			_add_socket_unique(sockets, keys, rows[nearest_idx], false)
 
 
@@ -1068,6 +1076,8 @@ func _augment_with_midpath_pair_sockets(
 			if b_idx <= 0 or b_idx >= rows_b.size() - 1:
 				continue
 
+			if _owns_lateral_pair(rows_a[a_idx], rows_b[b_idx]):
+				continue
 			_add_socket_unique(sockets, keys, rows_a[a_idx], false)
 			_add_socket_unique(sockets, keys, rows_b[b_idx], false)
 
@@ -1195,6 +1205,8 @@ func _cluster_sockets(
 				if used.has(j):
 					continue
 				for idx in cluster:
+					if _owns_lateral_pair(sockets[idx], sockets[j]):
+						continue
 					var a: Vector3 = sockets[idx]["position"]
 					var b: Vector3 = sockets[j]["position"]
 					var pair_snap := _resolve_socket_pair_snap_distance(sockets[idx], sockets[j], path_weld_snap)

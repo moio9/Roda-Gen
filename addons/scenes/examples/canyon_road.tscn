@@ -1,8 +1,7 @@
 [gd_scene format=4 uid="uid://g7sjxqx3ctvx"]
 
-[ext_resource type="Script" uid="uid://brhcf1sh6taui" path="res://addons/scenes/examples/example_camera.gd" id="camera"]
+[ext_resource type="Script" path="../../scripts/orbit_camera.gd" id="camera"]
 [ext_resource type="Script" uid="uid://dghdjvnk5cwr7" path="res://addons/scripts/spline_road/spline_mesh_deformer.gd" id="deformer"]
-[ext_resource type="Script" uid="uid://cp2acy43a2d5" path="res://addons/scenes/examples/example_scene.gd" id="example"]
 [ext_resource type="Script" uid="uid://cdaj44iqbrlce" path="res://addons/scripts/spline_road/spline_path_profile.gd" id="profile"]
 [ext_resource type="Script" uid="uid://dug85y00gliex" path="res://addons/scripts/spline_road/spline_prop_array.gd" id="props"]
 [ext_resource type="Script" uid="uid://b8dn8sx6ln6xf" path="res://addons/scripts/spline_road/road_network_creator.gd" id="road"]
@@ -157,7 +156,6 @@ roughness = 0.9
 size = Vector3(0.12, 0.24, 4)
 
 [node name="canyon_road" type="Node3D" unique_id=382045900]
-script = ExtResource("example")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1073139873]
 environment = SubResource("environment")
@@ -175,7 +173,7 @@ fov = 58.0
 far = 1600.0
 script = ExtResource("camera")
 focus = Vector3(0, 15, 20)
-example_title = "CANYON / Wide bends and hatched refuges"
+title = "CANYON / Wide bends and hatched refuges"
 
 [node name="Road" type="Node3D" parent="." unique_id=2125319746]
 script = ExtResource("road")
@@ -225,15 +223,16 @@ mesh = SubResource("ArrayMesh_a2mmd")
 
 [node name="Terrain" type="Node3D" parent="." unique_id=1454052226]
 script = ExtResource("terrain")
+generate_on_ready = true
 source_paths = Array[NodePath]([NodePath("../Road/CanyonRoute")])
 road_network_source = NodePath("../Road")
-path_sample_step = 3.0
+path_sample_step = 2.0
 adaptive_path_sampling = false
 bounds_mode = 1
 manual_center_xz = Vector2(0, 20)
 manual_size_xz = Vector2(350, 460)
-far_grid_step = 12.0
-near_road_step = 6.0
+far_grid_step = 6.0
+near_road_step = 1.5
 near_road_width = 70.0
 invert_faces = true
 left_profile_distances = PackedFloat32Array(0, 3, 8, 18, 35, 65)
@@ -241,6 +240,9 @@ left_profile_heights = PackedFloat32Array(0, -0.5, 3, 18, 30, 25)
 right_profile_distances = PackedFloat32Array(0, 3, 12, 30, 50, 80)
 right_profile_heights = PackedFloat32Array(0, -1, -12, -24, -8, 25)
 noise_amplitude = 2.5
+rock_detail_enabled = true
+rock_lateral_amplitude = 7.0
+rock_height_amplitude = 1.8
 incremental_generation_enabled = true
 terrain_material_override = SubResource("rock")
 threaded_triangulation_enabled = false

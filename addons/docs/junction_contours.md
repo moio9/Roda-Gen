@@ -8,8 +8,10 @@ are the source roads. The ground is just a flat plane, with no terrain builder,
 walls or custom connector meshes. RMB orbits, wheel zooms, WASD pans, R resets.
 
 This is an opt-in geometry mode of the existing RoadNetworkCreator3D.
-Socket discovery and clustering remain unchanged. The original algorithm is
-still available as **Weld → Junction Geometry Mode → Legacy**.
+The original algorithm remains available as
+**Weld → Junctions → Junction Geometry Mode → Legacy**. When lateral joining is
+enabled, priority is decided at each local contact; a lateral join at one end
+does not disable a transverse junction elsewhere on those paths.
 
 The existing scenes/spline_road/spline_intersections_demo.tscn now opts into
 **Contour (Experimental)**. Reload that scene and regenerate Intersections
@@ -37,6 +39,8 @@ interior road triangles. Asphalt is triangulated as a continuous outline;
 shoulders and sidewalks are separate bands. Sidewalk widths and heights blend
 between actual connected edges instead of squeezing an entire cross section.
 Two-arm joins and endpoint-to-midpath T connections use the same source roads.
+Contour asphalt UV tiling follows the road's `uv_length_scale`, so the junction
+uses the same texture density as the incoming lanes.
 
 For sloped outlines with at least three arms, the builder uses a triangle fan
 when the junction center lies strictly inside the polygon kernel. Its interior
@@ -49,8 +53,14 @@ The junction report's `interior_support` flag identifies the fan construction.
 Asphalt and outer-sidewalk outlines are checked for self-intersection before
 publishing. Each arm requests retreat based on its own width and is capped at
 its own available sampled length, retaining at least one original end segment.
-If necessary, the builder attempts larger retreats up to three times; short arms
-stay at their individual limits while longer arms can supply more space.
+Retreat stops before an approach bends away from the local junction direction.
+A nearby host endpoint outside the other road's asphalt remains a continuing arm.
+If the candidate overlaps and an arm is limited, the builder retries with less
+rounding space; otherwise it can try larger retreats, up to three retries.
+Reports expose `requested_radius` and `fitted_radius`; the authored setting stays
+unchanged. Junction-area shoulders and sidewalks are clipped against the actual
+asphalt of the participating roads, including vertical curb faces, with a height
+filter to avoid cutting bands on a different level.
 This does not scale down the authored sidewalk widths. Unsupported or overlapping layouts
 fall back to Legacy and emit a warning. This is not a highway merge solver.
 
@@ -59,8 +69,27 @@ this mode does not silently flatten terrain or remove authored walls. In the
 legacy demo those settings can obscure the junction in the complete scene.
 Terrain strips touching retired rows are suppressed, but no new automatic terrain
 collar is constructed along the curved sidewalk perimeter in this first version.
-The standalone TerrainTopologyBuilder3D still derives its road mask from paths;
-it does not yet consume the new corner outline.
+`TerrainTopologyBuilder3D` automatically consumes the final road surface from
+its resolved `RoadNetworkCreator3D` sources. This includes contour corners and
+their final heights. No scene-specific script is needed. Road-only source arrays
+exclude built-in terrain and outer walls and work with Single Mesh and Spatial
+Chunks output. Plain paths without a road network retain path-based terrain.
+
+Terrain adds final-road vertices as triangulation supports, clips crossing
+triangles instead of rejecting them wholesale, and fits the cut seam height.
+Both `generate_road_edge_collars` and `auto_lane_profile_edge_collars` must be
+false to disable collars; their settings remain independent of junction fitting.
+`terrain_edge_y_offset = 0.0` produces a flush height seam. Existing authored
+offsets, height-lock and blend controls are respected.
+
+A terrain rebuild waits for pending road generation. Final-road revisions and
+transforms participate in editor regeneration signatures. While final-road
+clipping is active, path-only incremental source caches are bypassed because
+their triangle replay does not represent the clipped output; spatial output
+resource reuse remains available. The XZ mask retains the existing ground-road
+limitation and is not a stacked-bridge terrain solver. The former
+`road_mesh_terrain.gd` and `poiana_terrain.gd` scripts are compatibility aliases
+of the shared generator.
 
 New corner triangles currently rebuild on every generation. Source caches remain
 usable, but the legacy junction replay cache is bypassed for successful contour

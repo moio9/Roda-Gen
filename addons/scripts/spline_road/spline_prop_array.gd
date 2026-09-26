@@ -23,6 +23,13 @@ class_name SplinePropArray3D
 
 @export_group("Placement")
 @export_enum("Center", "Left Edge", "Right Edge", "Both Edges") var placement_mode := 0
+## Fit each rigid module between consecutive samples of the chosen road edge.
+## Measures the model after Custom Transform rotation/scale; its length must run along local Z.
+## Spacing controls sample intervals. Randomization is ignored to keep shared endpoints connected.
+@export var fit_segments_to_path := false
+## Connected edge segments follow the final welded road outline, including their thickness.
+## Uses Road Network Source and Edge Uses Total Road Width; blocked junction spans stay open.
+@export var follow_generated_road_edge := true
 @export_range(0.1, 200.0, 0.1, "or_greater", "suffix:m") var spacing := 6.0
 @export_range(0.0, 200.0, 0.1, "or_greater", "suffix:m") var start_offset := 0.0
 @export_range(0.0, 200.0, 0.1, "or_greater", "suffix:m") var end_trim := 0.0
@@ -54,6 +61,40 @@ class_name SplinePropArray3D
 @export var align_with_curve_up := true
 @export_range(0.01, 5.0, 0.01, "or_greater", "suffix:m") var tangent_sample_distance := 0.2
 @export_range(-180.0, 180.0, 0.1, "or_greater", "or_less", "suffix:deg") var yaw_offset_degrees := 0.0
+var _custom_transform := Transform3D.IDENTITY
+var _custom_rotation_degrees := Vector3.ZERO
+var _custom_scale := Vector3.ONE
+## Keep the full transform as scene storage, including transforms saved by older versions.
+@export_storage var custom_transform: Transform3D:
+	get:
+		return _custom_transform
+	set(value):
+		_custom_transform = value
+		_custom_scale = value.basis.get_scale()
+		if value.basis.determinant() != 0.0:
+			_custom_rotation_degrees = value.basis.get_rotation_quaternion().get_euler() * (180.0 / PI)
+
+@export_group("Custom Transform", "custom_")
+## Offset in metres along the aligned prop's local X/Y/Z axes. Applied to every instance.
+@export var custom_position: Vector3:
+	get:
+		return _custom_transform.origin
+	set(value):
+		_custom_transform.origin = value
+## Additional local rotation in degrees, after spline alignment. Uses Node3D's YXZ order.
+@export var custom_rotation_degrees: Vector3:
+	get:
+		return _custom_rotation_degrees
+	set(value):
+		_custom_rotation_degrees = value
+		_update_custom_transform_basis()
+## Local X/Y/Z size multipliers for every prop. Use the link icon for uniform scaling.
+@export var custom_scale: Vector3:
+	get:
+		return _custom_scale
+	set(value):
+		_custom_scale = value
+		_update_custom_transform_basis()
 
 @export_group("Randomization")
 @export var random_seed := 1337
@@ -99,6 +140,7 @@ var _terrain_regeneration_pending := false
 var _connected_terrain_source: Node
 var _placement_cache := preload("./prop_placement_cache.gd").new()
 var _output_cache := preload("./prop_output_cache.gd").new()
+var _segment_fitter := preload("./prop_segment_fitter.gd").new()
 
 
 ## Source placement and native mesh output reuse. Idle built-in terrain can be
@@ -150,6 +192,8 @@ func _process(_delta: float) -> void:
 		regenerate()
 		return
 	if not Engine.is_editor_hint():
+		if fit_segments_to_path and (item_scene != null or item_mesh != null) and _segment_fitter.road_changed(self) and _can_generate():
+			regenerate()
 		return
 	if not auto_regenerate_in_editor:
 		return
@@ -212,6 +256,17 @@ func _get_configuration_warnings() -> PackedStringArray:
 
 
 func _validate_property(property: Dictionary) -> void:
+	if property.name in ["custom_position", "custom_rotation_degrees", "custom_scale"]:
+		# Inspector aliases share one stored transform, just like Node3D's controls.
+		property.usage = PROPERTY_USAGE_EDITOR
+		if property.name == "custom_position":
+			property.hint = PROPERTY_HINT_RANGE
+			property.hint_string = "-99999,99999,0.01,or_greater,or_less,hide_control,suffix:m"
+		elif property.name == "custom_rotation_degrees":
+			property.hint = PROPERTY_HINT_RANGE
+			property.hint_string = "-360,360,0.1,or_greater,or_less,hide_control,suffix:°"
+		else:
+			property.hint = PROPERTY_HINT_LINK
 	if property.name == "multimesh_chunk_size" and render_mode != RENDER_MULTIMESH:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
 	if (
@@ -221,6 +276,22 @@ func _validate_property(property: Dictionary) -> void:
 		or property.name == "snap_to_ground_y_offset"
 	) and not snap_to_ground_enabled:
 		property.usage = PROPERTY_USAGE_NO_EDITOR
+
+
+func _update_custom_transform_basis() -> void:
+	_custom_transform.basis = Basis.from_euler(_custom_rotation_degrees * (PI / 180.0)).scaled_local(_custom_scale)
+
+
+func _property_can_revert(property: StringName) -> bool:
+	return property in [&"custom_position", &"custom_rotation_degrees", &"custom_scale"]
+
+
+func _property_get_revert(property: StringName) -> Variant:
+	if property == &"custom_scale":
+		return Vector3.ONE
+	if property in [&"custom_position", &"custom_rotation_degrees"]:
+		return Vector3.ZERO
+	return null
 
 
 func regenerate() -> void:
@@ -251,6 +322,10 @@ func regenerate() -> void:
 		# provider is unavailable. Retry the latest requested configuration on idle.
 		_terrain_regeneration_pending = true
 		return
+	if fit_segments_to_path and not _segment_fitter.prepare(self):
+		push_warning("SplinePropArray3D: connected segments need a mesh with nonzero length along Z after Custom Transform.")
+		_last_signature = _build_signature()
+		return
 	_placement_cache.begin_build(self)
 	var root: Node3D = _output_cache.begin_build(self, _placement_cache.can_reuse_output(paths))
 
@@ -278,6 +353,17 @@ func _scatter_path(
 	endpoint_zones: Array,
 	span_ranges_by_path: Dictionary
 ) -> int:
+	if fit_segments_to_path:
+		var placements: Array = _segment_fitter.placements(self, path, parent_root, endpoint_zones, span_ranges_by_path)
+		var batches: Dictionary = {}
+		var use_multimesh := render_mode == RENDER_MULTIMESH and item_scene == null and item_mesh != null
+		var count := _emit_recorded_placements(path, parent_root, placements, use_multimesh, batches, 0)
+		if use_multimesh:
+			_create_multimesh_batches(path, parent_root, batches)
+		_placement_cache.stats.placements_rebuilt += count
+		_placement_cache.stats.paths_bypassed += 1
+		_placement_cache.stats.bypass_reasons["connected_segments"] = _placement_cache.stats.bypass_reasons.get("connected_segments", 0) + 1
+		return count
 	var key := _placement_cache.key_for(path, parent_root, rng, endpoint_zones, span_ranges_by_path)
 	var previous: Dictionary = {}
 	if not key.is_empty():
@@ -456,18 +542,21 @@ func _scatter_path_uncached(
 				rng
 			)
 			var world_xform := Transform3D(basis, world_pos)
-			spawn_node.transform = world_to_parent * world_xform
+			spawn_node.transform = world_to_parent * world_xform * custom_transform
 
 			var uniform_scale := _sample_uniform_scale(rng)
-			spawn_node.scale = spawn_node.scale * uniform_scale
+			if not is_equal_approx(uniform_scale, 1.0):
+				var placed := spawn_node.transform
+				spawn_node.transform = Transform3D(placed.basis.scaled(Vector3.ONE * uniform_scale), placed.origin)
+			var final_world_pos := parent_root.global_transform * spawn_node.transform.origin
 			if record_placements:
-				recorded_placements.append([spawn_node.transform, world_pos])
+				recorded_placements.append([spawn_node.transform, final_world_pos])
 			if use_multimesh:
 				var cell_size := maxf(1.0, multimesh_chunk_size)
 				var cell := Vector3i(
-					floori(world_pos.x / cell_size),
-					floori(world_pos.y / cell_size),
-					floori(world_pos.z / cell_size)
+					floori(final_world_pos.x / cell_size),
+					floori(final_world_pos.y / cell_size),
+					floori(final_world_pos.z / cell_size)
 				)
 				if not mesh_batches.has(cell):
 					mesh_batches[cell] = []
@@ -1131,6 +1220,8 @@ func _build_signature() -> String:
 		str(render_mode),
 		str(multimesh_chunk_size),
 		str(placement_mode),
+		str(fit_segments_to_path),
+		str(follow_generated_road_edge),
 		str(spacing),
 		str(start_offset),
 		str(end_trim),
@@ -1157,6 +1248,7 @@ func _build_signature() -> String:
 		str(align_with_curve_up),
 		str(tangent_sample_distance),
 		str(yaw_offset_degrees),
+		str(custom_transform),
 		str(random_seed),
 		str(randomize_seed_each_regenerate),
 		str(longitudinal_jitter),
@@ -1174,6 +1266,8 @@ func _build_signature() -> String:
 	var road_network := get_node_or_null(road_network_source)
 	if road_network != null:
 		parts.append(str(road_network.global_transform))
+		if fit_segments_to_path and follow_generated_road_edge and road_network.has_method("get_terrain_surface_revision"):
+			parts.append(str(road_network.get_terrain_surface_revision()))
 		for property_name in ["y_offset", "road_orientation_mode", "road_bank_max_degrees", "road_bank_strength", "road_bank_sample_distance"]:
 			parts.append(str(road_network.get(property_name)))
 	for child in get_children():

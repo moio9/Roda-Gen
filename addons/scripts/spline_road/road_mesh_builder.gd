@@ -64,8 +64,17 @@ func _append_outer_walls_from_path_rows(
 			var wall_height := (wall_h0 + wall_h1) * 0.5
 			if wall_height <= 0.0001:
 				continue
-			_append_outer_wall_segment(verts, normals, uvs, wall_indices, int(e0[0]), int(e1[0]), int(e0[2]), int(e1[2]), wall_height)
-			_append_outer_wall_segment(verts, normals, uvs, wall_indices, int(e0[5]), int(e1[5]), int(e0[3]), int(e1[3]), wall_height)
+			if not row0.has("lateral_left") and not row0.has("lateral_right"):
+				_append_outer_wall_segment(verts, normals, uvs, wall_indices, int(e0[0]), int(e1[0]), int(e0[2]), int(e1[2]), wall_height)
+				_append_outer_wall_segment(verts, normals, uvs, wall_indices, int(e0[5]), int(e1[5]), int(e0[3]), int(e1[3]), wall_height)
+				continue
+			for side in [-1,1]:
+				var ranges := preload("./road_lateral_join.gd").outside_ranges(row0.get("lateral_left" if side < 0 else "lateral_right",[]))
+				var outer := 0 if side < 0 else 5
+				var inner := 2 if side < 0 else 3
+				for interval: Vector2 in ranges:
+					_append_outer_wall_segment(verts, normals, uvs, wall_indices, int(e0[outer]), int(e1[outer]),
+						int(e0[inner]), int(e1[inner]), wall_height, interval)
 
 
 func _append_outer_wall_segment(
@@ -77,17 +86,24 @@ func _append_outer_wall_segment(
 	top_idx_1: int,
 	inner_idx_0: int,
 	inner_idx_1: int,
-	wall_height: float
+	wall_height: float,
+	interval := Vector2(0,1)
 ) -> void:
 	if wall_height <= 0.0001:
 		return
 	var top0: Vector3 = verts[top_idx_0]
 	var top1: Vector3 = verts[top_idx_1]
+	if interval != Vector2(0,1):
+		top0 = verts[top_idx_0].lerp(verts[top_idx_1],interval.x)
+		top1 = verts[top_idx_0].lerp(verts[top_idx_1],interval.y)
 	if top0.distance_to(top1) <= 0.0001:
 		return
 
 	var inner0: Vector3 = verts[inner_idx_0]
 	var inner1: Vector3 = verts[inner_idx_1]
+	if interval != Vector2(0,1):
+		inner0 = verts[inner_idx_0].lerp(verts[inner_idx_1],interval.x)
+		inner1 = verts[inner_idx_0].lerp(verts[inner_idx_1],interval.y)
 	var outward := ((top0 - inner0) + (top1 - inner1)) * 0.5
 	outward.y = 0.0
 	if outward.length() < 0.001:
@@ -222,6 +238,7 @@ func _build_mesh(
 		false
 	)
 	_profile_log("build mesh surface outer walls", profile_surface_start, "indices=%s" % [wall_indices.size()])
+	mesh.set_meta("_roda_terrain_surface", {"vertices": verts, "indices": lane_indices + shoulder_indices + sidewalk_indices})
 	return mesh
 
 

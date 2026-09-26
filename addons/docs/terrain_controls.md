@@ -6,7 +6,7 @@ This is the short guide for the terrain controls that usually matter while tunin
 
 ### Road Source
 
-- `source_paths`: road paths used as the terrain cut mask.
+- `source_paths`: road paths used as the terrain cut mask. Resolved road networks also provide their final junction geometry and heights automatically, in both road output modes. Plain paths retain the path mask.
 - `path_sample_step`: base spacing for road samples. Smaller values follow curves better and cost more.
 - `road_orientation_mode`: how the road frame is oriented. `Bank Into Curve` is useful for banked roads.
 
@@ -58,6 +58,56 @@ Road edge points, near-road rings, inside-road filtering, and crossing filtering
 - `noise_enabled`: terrain noise toggle.
 - `noise_start_distance_from_road`: keeps noise away from the road edge.
 - `noise_fade_distance`: fades noise in gradually.
+
+### Rock Detail
+
+Optional relief for canyon walls and rocky slopes, disabled by default.
+
+- `rock_lateral_amplitude`: shifts the profile contours sideways using 3D noise.
+- `rock_height_amplitude`: adds smaller vertical surface irregularities.
+- `rock_detail_scale`: size of the formations; lower values need closer sampling.
+- `rock_layer_amplitude` / `rock_layer_spacing`: depth and spacing of rock strata.
+- `rock_detail_seed`: repeatable variation independent of broad terrain noise.
+
+This warps the sampled profile distance; XZ mesh vertices stay on their original
+triangulation. It produces lateral variation without folded triangles, but cannot
+make overhangs or caves. Generated collision and terrain height queries use the
+same detailed height function. Noise distance/fade settings also protect the road
+edge from rock detail, even when the broad `noise_enabled` toggle is off. Height
+modifiers and final road fitting run afterwards.
+
+The canyon example enables this in the shared builder with 1.5 m near-road
+spacing, 2 m path sampling and 6 m far-grid spacing. Smaller steps increase mesh
+size and regeneration time. Its reusable rock shader has color, layer spacing,
+grain scale and bump strength controls for visual detail below the mesh spacing;
+shader bumps do not change collision. Select Terrain and use **Regenerate Terrain**
+after editing these settings unless automatic regeneration is enabled.
+
+### Terrain UVs
+
+`slope_aware_uvs` under Output includes terrain height in one continuous UV
+projection. It can reduce stretching, but faces aligned with that projection
+can still stretch severely. Rebuilding again cannot fix that limitation.
+The option defaults to off and changes mesh UVs when terrain is regenerated.
+
+For cliffs, assign a ShaderMaterial using
+[`terrain_slope_triplanar.gdshader`](../materials/terrain_slope_triplanar.gdshader)
+to **Terrain Material Override**. This reusable shader blends five texture layers
+by slope, with each layer projected from X/Y/Z in world space. It supports color,
+normal and height textures, height blending, per-layer scales and distance scaling.
+Normal textures are reoriented for each projection. Actual face orientation also
+rejects grazing projections, including at cliff caps with smoothed vertex normals.
+
+Set the five `texture1`–`texture5` slots and their matching `normal1`–`normal5`
+and `depth1`–`depth5` maps. `resolution * triplanar_scale` controls repetitions
+per world metre; the default `triplanar_scale = 0.05` matches the flat terrain UV
+density. Each `uv1_level` multiplier adjusts one layer. World mapping is continuous
+between terrain chunks and independent of `slope_aware_uvs` or saved mesh UVs.
+
+Regenerate once after replacing the builder's material to assign it to existing
+output. Subsequent shader-parameter edits update the material immediately.
+Triplanar mapping reads more texture samples than a planar material, especially
+with parallax enabled; `depth_scale = 0` disables parallax for the corresponding layer.
 
 ### Incremental source work
 
@@ -135,6 +185,16 @@ Changed point sets use native full triangulation unless local triangulation is
 enabled and its patch checks succeed. Single Mesh output still rebuilds completely;
 the optional Spatial Chunks mode below retains unchanged final resources.
 Custom terrain subclasses and active height modifiers retain the full workflow.
+`TerrainHeightModifier3D` separately caches its sampled curve, nearby-segment
+index, and up to 65,536 exact point-distance results. These survive regeneration
+and height/profile/strength edits. Curve edits, curve replacement, modifier or
+builder transforms, radius, and distance sampling changes invalidate this cache.
+Height operations and road protection are evaluated again against current inputs;
+this does not enable local triangulation or source-triangle replay with modifiers.
+`get_distance_cache_stats()` on the modifier reports cumulative preparation,
+query reuse/rebuild, and segment-test counts. For small road indices without
+source replay, nearest-road searches visit occupied cells in their original
+search order, avoiding expensive empty-space searches on modifier-expanded terrain.
 Terrain-height queries return `{hit: false, pending: true}` during generation;
 consumers should retry after it finishes. `is_terrain_generation_pending()`
 exposes readiness and `terrain_generation_completed` signals the final completed
@@ -183,6 +243,21 @@ still run their full callbacks before exact output comparisons. Transparent or
 per-instance/AABB-dependent shaders can behave differently when output is split.
 See `source_regeneration.md` for tested geometry, physics, rendering and bounds.
 
+### Terrain Influence paths
+
+`TerrainInfluencePath3D` entries in either `source_paths` or `height_modifiers` shape the terrain instead of
+creating road cutouts. A path referenced in both lists is applied once. Child
+influences also follow the height-modifier auto-discovery settings. Their width, per-point width/height, cross-profile graph,
+strength and blend use the same height evaluator as the road generator. Influence
+samples add terrain detail and extend automatic bounds. `generate_influence_surface`
+controls the separate surface built by the road generator; turning it off does
+not disable height influence on `TerrainTopologyBuilder3D`.
+
+Road-edge height locking still runs after influence blending, preserving the
+junction seam. Profile edits participate in terrain regeneration signatures;
+regenerate terrain manually when editor auto regeneration is disabled. Influence
+sources use fresh height/triangle assembly instead of path-only source replay.
+
 ### Height Modifiers
 
 - `auto_find_height_modifiers`: finds child/group modifiers automatically.
@@ -199,6 +274,39 @@ See `source_regeneration.md` for tested geometry, physics, rendering and bounds.
 - `strength`: height amount for modes that use relative strength.
 - `falloff_power`: higher values make the falloff sharper.
 
+### Selected Point
+
+With the Roda-Gen editor plugin enabled, select the height modifier and click a
+control-point cross in the 3D view. Its native gizmo moves the curve point;
+rotation/scale transform its tangents. The Inspector's `Selected Point` section
+also lets you choose a point by index (zero is the first point).
+
+The modifier also creates `__PointHandles/Handle_000`, `Handle_001`, etc. in the
+scene tree. Select a handle node to edit its own radius, strength multiplier, and
+height offset in the Inspector, or move/rotate it with the normal Node3D tools.
+These nodes mirror the curve; adding/removing curve points updates their count.
+Their settings remain stored on the modifier, and saved editor handles are removed
+at runtime. Selecting a handle node keeps that node selected instead of redirecting
+the Inspector to the parent.
+
+- `selected_point_radius`: local radius; editing it enables the override.
+  Disable `selected_point_custom_radius` to inherit the global radius again.
+- `selected_point_strength_scale`: multiplier for the height change produced by
+  the current mode. One preserves the mode's result, zero suppresses that change.
+- `selected_point_height_offset`: additional height faded by the local radius and
+  road protection. This is independent of the strength multiplier.
+
+Values interpolate along the baked length between control points, including the
+closing span of a closed curve. Storage uses `point_radii` (negative means inherit),
+`point_strength_scales` (default one), and `point_height_offsets` (default zero),
+indexed by curve-point order. Empty arrays preserve the original terrain shape.
+Height and strength edits reuse distance queries; radius or curve edits invalidate
+the spatial cache. Inspector edits and gizmo transforms support Undo/Redo even
+after changing the selected point.
+
+The editor regression fixture is `tests/fixtures/height_modifier_editing.tscn`;
+open it with Godot `--editor` and append `-- --roda-height-modifier-tests`.
+
 ### Road Protection
 
 - `affect_near_roads`: if off, the modifier avoids the road edge.
@@ -213,6 +321,65 @@ See `source_regeneration.md` for tested geometry, physics, rendering and bounds.
 - `resolution_path_step`: spacing along the modifier path.
 - `resolution_radial_rings`: number of cross-section rings.
 - `add_circle_resolution_points`: adds radial/circular samples. Useful for broad blobs, but can cost more.
+
+## Wide depressions and plateaus without extra splines
+
+On `TerrainTopologyBuilder3D`, set `left_profile_continuation` or
+`right_profile_continuation` to **Continue Last Height**. After the last distance
+key, that side keeps the last profile elevation instead of blending to
+`base_height`. The default **Return To Base** preserves existing scenes.
+
+For a single road, use `SplinePathProfile3D` → **Terrain Profile Continuation**:
+`terrain_left_profile_continuation` and `terrain_right_profile_continuation`.
+**Inherit** uses the builder setting; the other choices override it per side.
+These overrides also work with **Terrain Height Profile Override** disabled.
+Left/right follow the spline direction, not fixed world axes.
+
+Depth is still controlled by the final profile height (for example `-45`),
+relative to the nearest road height. Noise, height modifiers and road-edge
+protection still apply. This creates real terrain with a floor, not a void or
+a volumetric solid. Enable `generate_collision` for a physical floor.
+
+Continuation ends at the generated terrain bounds; increase manual size or
+automatic outer padding for a wider area. Another nearest road takes over with
+its own profile: this is not a directional search for a far bank, and mismatched
+profiles can create a transition ridge. Existing zero blend-distance behavior
+is unchanged (no return blend on that profile).
+
+Open `addons/scenes/examples/wide_chasm.tscn`: one editable road spline,
+normal terrain on the left, and a 45 m deep floor extending right to the bounds.
+`Terrain/TerrainSpline` is an editable `TerrainInfluencePath3D` that raises a
+curved ridge on that floor. Move its curve points vertically, or adjust
+`influence_width` and `influence_blend`; setting `influence_strength` to zero
+shows the unmodified floor again. It shapes the same terrain mesh, not a road.
+Run `tools/check_terrain_continuation.gd` to check both sides, overrides and
+full versus cached mesh/collision regeneration.
+
+### Continuation on a terrain spline (including closed loops)
+
+`TerrainInfluencePath3D` has its own **Terrain Continuation** controls:
+`terrain_left_continuation` / `terrain_right_continuation` → **Continue To Terrain Bounds**.
+The default **Local Band** retains the old width-limited behavior. These controls
+require `TerrainTopologyBuilder3D` to generate the surrounding mesh; a standalone
+influence surface is only a strip and does not fill a loop's interior.
+
+Use `addons/scenes/examples/terrain_spline_continuation.tscn` for a clean test:
+`Terrain/BasinBoundary` is a closed spline at -35 m with **right** continuation
+enabled. Its whole interior has terrain and collision, rather than just a ring.
+Disable right continuation to see the difference. Enable left continuation to
+extend outward instead. Which side is inward depends on curve direction.
+
+Beyond the cross-profile width/blend, the profile's final value is held relative
+to the spline Y. The nearest terrain spline owns the region; a nearer road
+fades continuation back to the existing terrain, with road-edge protection
+still applied. This is nearest-source ownership, not a directional raycast.
+Different source heights may create transitions at ownership boundaries.
+Continuation does not enlarge manual bounds: keep the source and intended floor
+inside them, or enlarge them explicitly. `generate_influence_surface = false`
+avoids a duplicate strip when the topology builder generates the surface.
+
+`tools/check_terrain_influence_continuation.gd` checks actual floor collision,
+open/closed curves, both sides, nearer sources and editor signature invalidation.
 
 ## Good Starting Values
 

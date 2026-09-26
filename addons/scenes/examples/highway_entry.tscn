@@ -1,15 +1,9 @@
 [gd_scene format=3]
 
-[ext_resource type="Script" path="example_junction.gd" id="connector"]
-
-[ext_resource type="Script" path="example_scene.gd" id="example"]
-
 [ext_resource type="Script" path="../../scripts/spline_road/road_network_creator.gd" id="road"]
 [ext_resource type="Script" path="../../scripts/spline_road/spline_path_profile.gd" id="profile"]
 [ext_resource type="Script" path="../../scripts/spline_road/terrain_topology_builder.gd" id="terrain"]
-[ext_resource type="Script" path="../../scripts/spline_road/spline_prop_array.gd" id="props"]
-[ext_resource type="Script" path="../../scripts/spline_road/spline_mesh_deformer.gd" id="deformer"]
-[ext_resource type="Script" path="example_camera.gd" id="camera"]
+[ext_resource type="Script" path="../../scripts/orbit_camera.gd" id="camera"]
 
 [sub_resource type="StandardMaterial3D" id="asphalt"]
 albedo_color = Color(0.075, 0.085, 0.10, 1)
@@ -60,10 +54,10 @@ point_count = 2
 
 [sub_resource type="Curve3D" id="EntryRamp"]
 _data = {
-"points": PackedVector3Array(0, 0, -35, 0, 0, 35, 95, 0, -165, 30, 0, -35, -30, 0, 35, 42, 0, -75, 0, 0, -40, 0, 0, 0, 7.5, 0, 20),
-"tilts": PackedFloat32Array(0, 0, 0)
+"points": PackedVector3Array(0, 0, -35, 0, 0, 35, 95, 0, -165, 30, 0, -35, -30, 0, 35, 42, 0, -75, 0, 0, -40, 0, 0, 0, 7.5, 0, 20, 0, 0, 0, 0, 0, 0, 7.5, 0, 100, 0, 0, 0, 0, 0, 0, 7.5, 0, 180),
+"tilts": PackedFloat32Array(0, 0, 0, 0, 0)
 }
-point_count = 3
+point_count = 5
 
 [sub_resource type="Curve3D" id="OppositeCarriageway"]
 _data = {
@@ -73,7 +67,6 @@ _data = {
 point_count = 2
 
 [node name="highway_entry" type="Node3D"]
-script = ExtResource("example")
 
 [node name="GroundSupport" type="MeshInstance3D" parent="."]
 position = Vector3(0, -0.16, 15)
@@ -96,7 +89,7 @@ far = 1600.0
 fov = 58.0
 script = ExtResource("camera")
 focus = Vector3(15, 0, 15)
-example_title = "HIGHWAY / Entry and acceleration lane"
+title = "HIGHWAY / Entry and acceleration lane"
 
 [node name="Road" type="Node3D" parent="."]
 script = ExtResource("road")
@@ -110,7 +103,8 @@ adaptive_sampling_enabled = false
 incremental_generation_enabled = true
 markings_enabled = true
 markings_center_style = 0
-markings_edge_style = 0
+markings_edge_style = 1
+markings_hatching_enabled = false
 markings_dash_length = 6.0
 markings_dash_gap = 9.0
 debug_generation_logs = false
@@ -119,6 +113,7 @@ threaded_generation_enabled = false
 [node name="MainApproach" type="Path3D" parent="Road"]
 curve = SubResource("MainApproach")
 script = ExtResource("profile")
+lateral_join_group = "entry"
 lane_profile_enabled = true
 default_lanes_left = 0
 default_lanes_right = 2
@@ -132,12 +127,14 @@ show_width_preview = false
 [node name="EntryRamp" type="Path3D" parent="Road"]
 curve = SubResource("EntryRamp")
 script = ExtResource("profile")
+lateral_join_group = "entry"
 lane_profile_enabled = true
 default_lanes_left = 0
 default_lanes_right = 1
-point_lanes_left = PackedInt32Array(0, 0, 0)
-point_lanes_right = PackedInt32Array(1, 1, 1)
-point_lane_widths = PackedFloat32Array(3.75, 3.75, 3.75)
+point_lanes_left = PackedInt32Array(0, 0, 0, 0, 0)
+point_lanes_right = PackedInt32Array(1, 1, 1, 1, 0)
+point_lane_widths = PackedFloat32Array(3.75, 3.75, 3.75, 3.75, 3.75)
+point_lane_transition_lengths = PackedFloat32Array(0, 0, 0, 0, 80)
 shoulder_left_width = 0.0
 shoulder_right_width = 0.0
 show_width_preview = false
@@ -157,6 +154,7 @@ show_width_preview = false
 
 [node name="Terrain" type="Node3D" parent="."]
 script = ExtResource("terrain")
+generate_on_ready = true
 source_paths = Array[NodePath]([NodePath("../Road/MainApproach"), NodePath("../Road/EntryRamp"), NodePath("../Road/OppositeCarriageway")])
 road_network_source = NodePath("../Road")
 path_sample_step = 3.0
@@ -179,10 +177,3 @@ noise_amplitude = 2.5
 terrain_material_override = SubResource("ground")
 threaded_triangulation_enabled = false
 incremental_generation_enabled = true
-
-[node name="AccelerationLane" type="MeshInstance3D" parent="."]
-script = ExtResource("connector")
-layout = 1
-asphalt = SubResource("asphalt")
-sidewalk = SubResource("sidewalk")
-paint = SubResource("paint")

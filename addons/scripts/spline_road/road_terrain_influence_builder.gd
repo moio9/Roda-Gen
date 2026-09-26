@@ -4,6 +4,7 @@ extends RefCounted
 ## Configuration is captured before a generation job; the coordinator owns scene nodes.
 
 var _road: Node
+var _standalone_lookup = preload("./road_terrain_builder.gd").new()
 const TERRAIN_INFLUENCE_DEFAULT_WIDTH := 6.0
 const TERRAIN_INFLUENCE_DEFAULT_BLEND := 3.0
 const TERRAIN_INFLUENCE_DEFAULT_STRENGTH := 1.0
@@ -658,76 +659,7 @@ func _apply_terrain_influence_strips_to_mesh(
 		var vi := int(idx_key)
 		var p := verts[vi]
 		var p2 := Vector2(p.x, p.z)
-		var best_weight := 0.0
-		var best_target_y := p.y
-		for strip_raw in prepared_strips:
-			var strip: Dictionary = strip_raw
-			var outer_vertex_ids: Dictionary = strip.get("outer_vertex_ids", {})
-			var lock_outer_vertex := bool(outer_vertex_ids.get(vi, false))
-			var points: PackedVector3Array = strip.get("points", PackedVector3Array())
-			if points.size() < 2:
-				continue
-			var half_widths: PackedFloat32Array = strip.get("half_widths", PackedFloat32Array())
-			var max_half_width := maxf(0.0, float(strip.get("max_half_width", strip.get("half_width", 0.0))))
-			var blend := maxf(0.0, float(strip.get("blend", 0.0)))
-			var strength := clampf(float(strip.get("strength", 1.0)), 0.0, 1.0)
-			var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
-			var profile_height := float(strip.get("profile_height", 0.0))
-			var profile_heights: PackedFloat32Array = strip.get("profile_heights", PackedFloat32Array())
-			var profile_graph_samples: PackedFloat32Array = strip.get("profile_graph_samples", PackedFloat32Array())
-			var max_dist := max_half_width + blend
-			if max_dist <= 0.0001 or strength <= 0.0001:
-				continue
-			var segment_lookup: Dictionary = strip.get("segment_lookup", {})
-			var segment_ids := _collect_segment_lookup_source_ids(p2, segment_lookup, max_dist)
-			if segment_ids.is_empty() and not segment_lookup.is_empty():
-				continue
-			var segment_count := segment_ids.size() if not segment_ids.is_empty() else points.size() - 1
-			for segment_idx in range(segment_count):
-				if (segment_idx % 64) == 0 and _is_generation_cancelled(cancel_token):
-					return
-				var i := int(segment_ids[segment_idx]) if not segment_ids.is_empty() else segment_idx
-				if i < 0 or i + 1 >= points.size():
-					continue
-				var a: Vector3 = points[i]
-				var b: Vector3 = points[i + 1]
-				var a2 := Vector2(a.x, a.z)
-				var b2 := Vector2(b.x, b.z)
-				var t := _closest_point_param_on_segment_2d(p2, a2, b2)
-				var closest := a2.lerp(b2, t)
-				var dist := p2.distance_to(closest)
-				var local_half_width := max_half_width
-				if i < half_widths.size():
-					local_half_width = maxf(0.0, float(half_widths[i]))
-				if i + 1 < half_widths.size():
-					local_half_width = lerpf(local_half_width, maxf(0.0, float(half_widths[i + 1])), t)
-				var local_profile_height := profile_height
-				if i < profile_heights.size():
-					local_profile_height = float(profile_heights[i])
-				if i + 1 < profile_heights.size():
-					local_profile_height = lerpf(local_profile_height, float(profile_heights[i + 1]), t)
-				var local_max_dist := local_half_width + blend
-				if local_max_dist <= 0.0001 or dist > local_max_dist:
-					continue
-				var edge_weight := 1.0
-				if blend > 0.0001 and dist > local_half_width:
-					edge_weight = 1.0 - clampf((dist - local_half_width) / blend, 0.0, 1.0)
-				elif dist > local_half_width:
-					edge_weight = 0.0
-				if edge_weight <= 0.0001:
-					continue
-				edge_weight = edge_weight * edge_weight * (3.0 - 2.0 * edge_weight)
-				edge_weight *= strength
-				if edge_weight <= best_weight:
-					continue
-				best_weight = edge_weight
-				var dist_t := clampf(dist / local_max_dist, 0.0, 1.0)
-				var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve, profile_graph_samples)
-				if lock_outer_vertex:
-					profile_peak = 0.0
-				best_target_y = lerpf(a.y, b.y, t) + local_profile_height * profile_peak
-		if best_weight > 0.0001:
-			p.y = lerpf(p.y, best_target_y, best_weight)
+		p.y = sample_prepared_height(p, prepared_strips, vi, cancel_token)
 		if can_snap_over_road:
 			var zone_match := false
 			for zone_raw in over_road_zones:
@@ -778,6 +710,8 @@ func _closest_point_param_on_segment_2d(point: Vector2, a: Vector2, b: Vector2) 
 
 # Typed entry points into the generation coordinator.
 func _is_generation_cancelled(cancel_token: Dictionary) -> bool:
+	if cancel_token.is_empty():
+		return false
 	return _road._is_generation_cancelled(cancel_token)
 
 
@@ -806,11 +740,11 @@ func _sample_nearest_segment_height_2d(
 
 
 func _build_2d_segment_distance_lookup(segments: Array, cell_size_hint: float) -> Dictionary:
-	return _road._build_2d_segment_distance_lookup(segments, cell_size_hint)
+	return _standalone_lookup._build_2d_segment_distance_lookup(segments, cell_size_hint) if _road == null else _road._build_2d_segment_distance_lookup(segments, cell_size_hint)
 
 
 func _collect_segment_lookup_source_ids(point: Vector2, lookup: Dictionary, radius: float) -> Array:
-	return _road._collect_segment_lookup_source_ids(point, lookup, radius)
+	return _standalone_lookup._collect_segment_lookup_source_ids(point, lookup, radius) if _road == null else _road._collect_segment_lookup_source_ids(point, lookup, radius)
 
 
 func _to_packed_float32_array(value: Variant) -> PackedFloat32Array:
@@ -841,3 +775,79 @@ func _resolve_path_component_scalar(
 
 func _sample_curve_up_vector(curve: Curve3D, dist: float) -> Vector3:
 	return _road._sample_curve_up_vector(curve, dist)
+
+
+## Shared height evaluation for built-in and standalone terrain.
+func sample_prepared_height(p: Vector3, prepared_strips: Array, vi := -1, cancel_token: Dictionary = {}) -> float:
+	var p2 := Vector2(p.x, p.z)
+	var best_weight := 0.0
+	var best_target_y := p.y
+	for strip_raw in prepared_strips:
+		var strip: Dictionary = strip_raw
+		var outer_vertex_ids: Dictionary = strip.get("outer_vertex_ids", {})
+		var lock_outer_vertex := bool(outer_vertex_ids.get(vi, false))
+		var points: PackedVector3Array = strip.get("points", PackedVector3Array())
+		if points.size() < 2:
+			continue
+		var half_widths: PackedFloat32Array = strip.get("half_widths", PackedFloat32Array())
+		var max_half_width := maxf(0.0, float(strip.get("max_half_width", strip.get("half_width", 0.0))))
+		var blend := maxf(0.0, float(strip.get("blend", 0.0)))
+		var strength := clampf(float(strip.get("strength", 1.0)), 0.0, 1.0)
+		var profile_curve := maxf(0.2, float(strip.get("profile_curve", 1.0)))
+		var profile_height := float(strip.get("profile_height", 0.0))
+		var profile_heights: PackedFloat32Array = strip.get("profile_heights", PackedFloat32Array())
+		var profile_graph_samples: PackedFloat32Array = strip.get("profile_graph_samples", PackedFloat32Array())
+		var max_dist := max_half_width + blend
+		if max_dist <= 0.0001 or strength <= 0.0001:
+			continue
+		var segment_lookup: Dictionary = strip.get("segment_lookup", {})
+		var segment_ids := _collect_segment_lookup_source_ids(p2, segment_lookup, max_dist)
+		if segment_ids.is_empty() and not segment_lookup.is_empty():
+			continue
+		var segment_count := segment_ids.size() if not segment_ids.is_empty() else points.size() - 1
+		for segment_idx in range(segment_count):
+			if (segment_idx % 64) == 0 and _is_generation_cancelled(cancel_token):
+				return p.y
+			var i := int(segment_ids[segment_idx]) if not segment_ids.is_empty() else segment_idx
+			if i < 0 or i + 1 >= points.size():
+				continue
+			var a: Vector3 = points[i]
+			var b: Vector3 = points[i + 1]
+			var a2 := Vector2(a.x, a.z)
+			var b2 := Vector2(b.x, b.z)
+			var t := _closest_point_param_on_segment_2d(p2, a2, b2)
+			var closest := a2.lerp(b2, t)
+			var dist := p2.distance_to(closest)
+			var local_half_width := max_half_width
+			if i < half_widths.size():
+				local_half_width = maxf(0.0, float(half_widths[i]))
+			if i + 1 < half_widths.size():
+				local_half_width = lerpf(local_half_width, maxf(0.0, float(half_widths[i + 1])), t)
+			var local_profile_height := profile_height
+			if i < profile_heights.size():
+				local_profile_height = float(profile_heights[i])
+			if i + 1 < profile_heights.size():
+				local_profile_height = lerpf(local_profile_height, float(profile_heights[i + 1]), t)
+			var local_max_dist := local_half_width + blend
+			if local_max_dist <= 0.0001 or dist > local_max_dist:
+				continue
+			var edge_weight := 1.0
+			if blend > 0.0001 and dist > local_half_width:
+				edge_weight = 1.0 - clampf((dist - local_half_width) / blend, 0.0, 1.0)
+			elif dist > local_half_width:
+				edge_weight = 0.0
+			if edge_weight <= 0.0001:
+				continue
+			edge_weight = edge_weight * edge_weight * (3.0 - 2.0 * edge_weight)
+			edge_weight *= strength
+			if edge_weight <= best_weight:
+				continue
+			best_weight = edge_weight
+			var dist_t := clampf(dist / local_max_dist, 0.0, 1.0)
+			var profile_peak := _terrain_influence_cross_profile(dist_t, profile_curve, profile_graph_samples)
+			if lock_outer_vertex:
+				profile_peak = 0.0
+			best_target_y = lerpf(a.y, b.y, t) + local_profile_height * profile_peak
+	if best_weight > 0.0001:
+		p.y = lerpf(p.y, best_target_y, best_weight)
+	return p.y

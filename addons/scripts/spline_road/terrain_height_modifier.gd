@@ -108,12 +108,271 @@ enum ModifierMode {
 ## Adds circular/radial samples. Smoother broad shapes, higher point count.
 @export var add_circle_resolution_points := false
 
+@export_group("Point Variations")
+## Radius per curve point. A negative entry inherits the global Radius.
+@export var point_radii := PackedFloat32Array()
+## Multiplier for the height operation per point. Missing entries use 1.
+@export var point_strength_scales := PackedFloat32Array()
+## Additional height per point, faded by radius and road protection.
+@export var point_height_offsets := PackedFloat32Array()
+
+@export_group("Selected Point")
+@export_range(0, 2048, 1) var selected_point_index := 0:
+	set(value):
+		selected_point_index = clampi(value, 0, maxi(0, (curve.point_count if curve != null else 0) - 1))
+		update_gizmos()
+		notify_property_list_changed()
+@export var selected_point_custom_radius: bool:
+	get:
+		return _point_value(point_radii, selected_point_index, -1.0) >= 0.0
+	set(value):
+		_set_point_value("point_radii", radius if value else -1.0, -1.0)
+@export_range(0.1, 1000.0, 0.1, "or_greater", "suffix:m") var selected_point_radius: float:
+	get:
+		return _point_radius(selected_point_index)
+	set(value):
+		_set_point_value("point_radii", maxf(0.1, value), -1.0)
+@export_range(0.0, 10.0, 0.01, "or_greater") var selected_point_strength_scale: float:
+	get:
+		return _point_value(point_strength_scales, selected_point_index, 1.0)
+	set(value):
+		_set_point_value("point_strength_scales", maxf(0.0, value), 1.0)
+@export_range(-500.0, 500.0, 0.01, "or_greater", "or_less", "suffix:m") var selected_point_height_offset: float:
+	get:
+		return _point_value(point_height_offsets, selected_point_index, 0.0)
+	set(value):
+		_set_point_value("point_height_offsets", value, 0.0)
+
+const POINT_HANDLES_NAME := "__PointHandles"
+const POINT_HANDLE_SCRIPT = preload("./terrain_height_handle.gd")
+
+const POINT_EDITOR_PROPERTIES := ["point_radii", "point_strength_scales", "point_height_offsets"]
+
+
+func _validate_property(property: Dictionary) -> void:
+	# Selection and its Inspector proxies are UI state, not scene source data.
+	if str(property.name).begins_with("selected_point_"):
+		property.usage = int(property.usage) & ~PROPERTY_USAGE_STORAGE
+
+
+func _point_value(values: PackedFloat32Array, index: int, fallback: float) -> float:
+	return float(values[index]) if index >= 0 and index < values.size() else fallback
+
+
+func _point_radius(index: int) -> float:
+	var value := _point_value(point_radii, index, -1.0)
+	return maxf(0.001, radius if value < 0.0 else value)
+
+
+func _maximum_point_radius() -> float:
+	var result := maxf(0.001, radius)
+	for i in range(mini(point_radii.size(), curve.point_count if curve != null else 0)):
+		result = maxf(result, _point_radius(i))
+	return result
+
+
+func _set_point_value(property: String, value: float, fallback: float) -> void:
+	if curve == null or curve.point_count == 0:
+		return
+	var index := clampi(selected_point_index, 0, curve.point_count - 1)
+	var values: PackedFloat32Array = get(property).duplicate()
+	while values.size() <= index:
+		values.append(fallback)
+	values[index] = value
+	set(property, values)
+	update_gizmos()
+	notify_property_list_changed()
+
+
+func select_point_index(index: int) -> void:
+	selected_point_index = index
+
+
+func _get_point_width(index: int) -> float:
+	return _point_radius(index) * 2.0
+
+
+func get_point_editor_transform(index: int) -> Transform3D:
+	if curve == null or index < 0 or index >= curve.point_count:
+		return Transform3D.IDENTITY
+	var tangent := curve.get_point_out(index)
+	if tangent.is_zero_approx():
+		tangent = -curve.get_point_in(index)
+	if tangent.is_zero_approx() and curve.point_count > 1:
+		tangent = curve.get_point_position(mini(index + 1, curve.point_count - 1)) - curve.get_point_position(maxi(0, index - 1))
+	var direction := Vector3(tangent.x, 0, tangent.z).normalized()
+	if direction.is_zero_approx():
+		direction = Vector3.FORWARD
+	return Transform3D(Basis(Vector3.UP.cross(direction), Vector3.UP, direction), curve.get_point_position(index))
+
+
+func apply_point_editor_transform(index: int, before: Transform3D, after: Transform3D, original_point: Array) -> void:
+	if curve == null or index < 0 or index >= curve.point_count:
+		return
+	var delta := after.basis * before.basis.inverse()
+	curve.set_point_position(index, original_point[0] + after.origin - before.origin)
+	curve.set_point_in(index, delta * original_point[1])
+	curve.set_point_out(index, delta * original_point[2])
+	select_point_index(index)
+
+
+func capture_editor_state() -> Dictionary:
+	var state := {"curve": curve, "curve_points": [], "closed": curve.closed if curve != null else false}
+	for property in POINT_EDITOR_PROPERTIES:
+		state[property] = get(property).duplicate()
+	if curve != null:
+		for i in range(curve.point_count):
+			state.curve_points.append([curve.get_point_position(i), curve.get_point_in(i), curve.get_point_out(i), curve.get_point_tilt(i)])
+	return state
+
+
+func restore_editor_state(state: Dictionary) -> void:
+	for property in POINT_EDITOR_PROPERTIES:
+		set(property, state[property].duplicate())
+	var old_points: Array = capture_editor_state().curve_points
+	var rewrite_curve: bool = curve != state.curve or old_points != state.curve_points or (curve != null and curve.closed != state.closed)
+	curve = state.curve
+	if curve != null and rewrite_curve:
+		curve.clear_points()
+		for point in state.curve_points:
+			curve.add_point(point[0], point[1], point[2])
+			curve.set_point_tilt(curve.point_count - 1, point[3])
+		curve.closed = state.closed
+	if rewrite_curve:
+		_mark_distance_dirty()
+	select_point_index(selected_point_index)
+
+
+func apply_editor_profile_change(before: Dictionary, property: String, value: Variant, index: int, replay: Dictionary = {}) -> void:
+	if replay.has("after"):
+		restore_editor_state(replay.after)
+		select_point_index(index)
+		return
+	restore_editor_state(before)
+	select_point_index(index)
+	set(property, value)
+	replay.after = capture_editor_state()
+
+
 var _noise := FastNoiseLite.new()
+
+# Geometry-only cache: height/profile/road-protection operations remain live.
+# Exact point keys allow unchanged vertices to reuse distance queries across builds.
+const MAX_DISTANCE_QUERIES := 65536
+var _distance_curve: Curve3D
+var _distance_dirty := true
+var _distance_builder_transform := Transform3D.IDENTITY
+var _distance_modifier_transform := Transform3D.IDENTITY
+var _distance_step := -1.0
+var _distance_radius := -1.0
+var _distance_samples: Array = []
+var _distance_point_radii := PackedFloat32Array()
+var _control_offsets := PackedFloat32Array()
+var _distance_cells: Dictionary = {}
+var _distance_overflow: Array[int] = []
+var _distance_queries: Dictionary = {}
+var _distance_cell_size := 1.0
+var _distance_stats := {"preparations": 0, "queries_reused": 0, "queries_rebuilt": 0, "segments_tested": 0}
+
+
+func get_distance_cache_stats() -> Dictionary:
+	return _distance_stats.duplicate()
+
+
+func _mark_distance_dirty() -> void:
+	_distance_dirty = true
+
+
+func _ensure_distance_cache(builder: Node3D) -> void:
+	if _distance_curve != curve:
+		if _distance_curve != null and _distance_curve.changed.is_connected(_mark_distance_dirty):
+			_distance_curve.changed.disconnect(_mark_distance_dirty)
+		_distance_curve = curve
+		if _distance_curve != null:
+			_distance_curve.changed.connect(_mark_distance_dirty)
+		_distance_dirty = true
+	if not _distance_dirty and _distance_builder_transform == builder.global_transform and _distance_modifier_transform == global_transform and _distance_step == distance_sample_step and _distance_radius == radius and _distance_point_radii == point_radii:
+		return
+	_distance_samples = _sample_centerline_points_in_builder_space(builder, maxf(0.25, distance_sample_step))
+	_distance_builder_transform = builder.global_transform
+	_distance_modifier_transform = global_transform
+	_distance_step = distance_sample_step
+	_distance_radius = radius
+	_distance_point_radii = point_radii.duplicate()
+	_prepare_control_offsets()
+	_distance_cells.clear()
+	_distance_overflow.clear()
+	_distance_queries.clear()
+	var max_radius := _maximum_point_radius()
+	_distance_cell_size = maxf(1.0, maxf(max_radius, distance_sample_step))
+	var pad := Vector2.ONE * max_radius
+	for i in range(_distance_samples.size() - 1):
+		var a: Vector2 = _distance_samples[i].p
+		var b: Vector2 = _distance_samples[i + 1].p
+		var lo := Vector2i(((a.min(b) - pad) / _distance_cell_size).floor())
+		var hi := Vector2i(((a.max(b) + pad) / _distance_cell_size).floor())
+		# Very large transforms must not allocate an unbounded grid per segment.
+		if (hi.x - lo.x + 1) * (hi.y - lo.y + 1) > 4096:
+			_distance_overflow.append(i)
+			continue
+		for x in range(lo.x, hi.x + 1):
+			for z in range(lo.y, hi.y + 1):
+				var key := Vector2i(x, z)
+				if not _distance_cells.has(key):
+					_distance_cells[key] = []
+				_distance_cells[key].append(i)
+	# Sampling can itself change bake_interval and emit Curve3D.changed.
+	_distance_dirty = false
+	_distance_stats.preparations += 1
 
 
 func _ready() -> void:
 	add_to_group(GROUP_NAME)
 	_configure_noise()
+	if Engine.is_editor_hint():
+		_sync_point_handles()
+	else:
+		var handles := get_node_or_null(POINT_HANDLES_NAME)
+		if handles != null:
+			handles.queue_free()
+		set_process(false)
+
+
+func _process(_delta: float) -> void:
+	if Engine.is_editor_hint():
+		_sync_point_handles()
+
+
+func _sync_point_handles() -> void:
+	if not is_inside_tree():
+		return
+	var count := curve.point_count if curve != null else 0
+	var handles := get_node_or_null(POINT_HANDLES_NAME)
+	if handles == null and count == 0:
+		return
+	var scene_owner := get_tree().edited_scene_root if Engine.is_editor_hint() else owner
+	if scene_owner != self and (scene_owner == null or not scene_owner.is_ancestor_of(self)):
+		scene_owner = owner
+	if handles == null:
+		handles = Node3D.new()
+		handles.name = POINT_HANDLES_NAME
+		add_child(handles)
+		handles.owner = scene_owner
+	# Keep node identities while editing so native transform Undo retains its target.
+	for child in handles.get_children():
+		if child.get_script() == POINT_HANDLE_SCRIPT and (child.point_index < 0 or child.point_index >= count):
+			handles.remove_child(child)
+			child.queue_free()
+	for i in range(count):
+		var node_name := "Handle_%03d" % i
+		var handle := handles.get_node_or_null(NodePath(node_name))
+		if handle == null:
+			handle = POINT_HANDLE_SCRIPT.new()
+			handle.name = node_name
+			handles.add_child(handle)
+			handle.owner = scene_owner
+		if handle.get_script() == POINT_HANDLE_SCRIPT:
+			handle.sync_from_profile(i, get_point_editor_transform(i))
 
 
 func prepare_for_terrain_builder() -> void:
@@ -122,6 +381,11 @@ func prepare_for_terrain_builder() -> void:
 
 func get_modifier_signature() -> String:
 	var parts: Array[String] = []
+	parts.append(str(global_transform))
+	for property in POINT_EDITOR_PROPERTIES:
+		parts.append(str(get(property)))
+	for property_name in ["distance_sample_step", "ditch_lip_strength", "ditch_lip_position", "cliff_break_position", "cliff_sharpness", "noise_seed", "noise_frequency", "noise_octaves", "noise_ridged", "resolution_circle_segments", "add_centerline_resolution_points", "add_cross_section_resolution_points", "add_circle_resolution_points"]:
+		parts.append(str(get(property_name)))
 	parts.append(str(enabled))
 	parts.append(str(mode))
 	parts.append(str(radius))
@@ -150,8 +414,12 @@ func get_modifier_signature() -> String:
 	parts.append(str(resolution_path_step))
 	parts.append(str(resolution_radial_rings))
 	if curve != null:
+		parts.append(str(curve.closed))
 		parts.append(str(curve.point_count))
-		parts.append(str(curve.get_baked_length()))
+		for i in range(curve.point_count):
+			parts.append(str(curve.get_point_position(i)))
+			parts.append(str(curve.get_point_in(i)))
+			parts.append(str(curve.get_point_out(i)))
 	return "|".join(parts)
 
 
@@ -170,41 +438,46 @@ func modify_height(builder: Node3D, point_xz: Vector2, current_y: float, road_in
 		return current_y
 
 	var d := float(info.get("distance", INF))
-	var r := maxf(0.001, radius)
+	var variation := _point_variation(float(info.get("offset", 0.0)))
+	var r := variation.x
 	if d > r:
 		return current_y
 
-	var w := _falloff_weight(d)
+	var w := _falloff_weight(d, r)
 	w *= road_weight
 	if w <= 0.0001:
 		return current_y
 
+	var modified := current_y
 	match mode:
 		ModifierMode.RAISE:
-			return current_y + strength * w
+			modified = current_y + strength * w
 		ModifierMode.LOWER:
-			return current_y - absf(strength) * w
+			modified = current_y - absf(strength) * w
 		ModifierMode.FLATTEN:
-			return lerpf(current_y, target_height, clampf(flatten_blend * absf(strength) * w, 0.0, 1.0))
+			modified = lerpf(current_y, target_height, clampf(flatten_blend * absf(strength) * w, 0.0, 1.0))
 		ModifierMode.DITCH:
-			return current_y + _sample_ditch_delta(d, r) * w
+			modified = current_y + _sample_ditch_delta(d, r) * w
 		ModifierMode.CLIFF:
-			return current_y + _sample_cliff_delta(d, r) * w
+			modified = current_y + _sample_cliff_delta(d, r) * w
 		ModifierMode.NOISE:
-			return current_y + _sample_modifier_noise(point_xz) * strength * w
+			modified = current_y + _sample_modifier_noise(point_xz) * strength * w
 		ModifierMode.TERRACE:
 			var step := maxf(0.001, terrace_step)
 			var terraced := roundf(current_y / step) * step
-			return lerpf(current_y, terraced, clampf(terrace_blend * absf(strength) * w, 0.0, 1.0))
+			modified = lerpf(current_y, terraced, clampf(terrace_blend * absf(strength) * w, 0.0, 1.0))
 		ModifierMode.CUSTOM_PROFILE:
 			var h := _sample_custom_profile(d)
 			if custom_profile_is_absolute_height:
-				return lerpf(current_y, h, w)
-			return current_y + h * w
+				modified = lerpf(current_y, h, w)
+			else:
+				modified = current_y + h * w
 		ModifierMode.CURVE_Y:
-			return _apply_curve_y_height(builder, current_y, float(info.get("y", current_y)), w)
+			modified = _apply_curve_y_height(builder, current_y, float(info.get("y", current_y)), w)
 
-	return current_y
+	if variation.y == 1.0 and variation.z == 0.0:
+		return modified
+	return current_y + (modified - current_y) * maxf(0.0, variation.y) + variation.z * w
 
 
 func _road_protection_weight(edge_distance: float) -> float:
@@ -269,7 +542,7 @@ func get_bounds_in_builder_space(builder: Node3D) -> Rect2:
 	var has_point := false
 	var min_v := Vector2(INF, INF)
 	var max_v := Vector2(-INF, -INF)
-	var pad := maxf(radius, resolution_radius)
+	var pad := maxf(_maximum_point_radius(), resolution_radius)
 
 	for data in centers:
 		var p: Vector2 = data.get("p", Vector2.ZERO)
@@ -287,8 +560,8 @@ func get_bounds_in_builder_space(builder: Node3D) -> Rect2:
 	return Rect2(min_v, max_v - min_v)
 
 
-func _falloff_weight(d: float) -> float:
-	var r := maxf(0.001, radius)
+func _falloff_weight(d: float, local_radius: float = -1.0) -> float:
+	var r := maxf(0.001, radius if local_radius < 0.0 else local_radius)
 	var inner := clampf(inner_radius, 0.0, r - 0.001)
 	if d <= inner:
 		return 1.0
@@ -370,7 +643,21 @@ func _configure_noise() -> void:
 
 
 func _nearest_path_info_in_builder_space(builder: Node3D, point_xz: Vector2) -> Dictionary:
-	var samples := _sample_centerline_points_in_builder_space(builder, maxf(0.25, distance_sample_step))
+	_ensure_distance_cache(builder)
+	if _distance_queries.has(point_xz):
+		_distance_stats.queries_reused += 1
+		return _distance_queries[point_xz]
+	_distance_stats.queries_rebuilt += 1
+	var result := _query_distance_cache(point_xz)
+	if _distance_queries.size() < MAX_DISTANCE_QUERIES:
+		_distance_queries[point_xz] = result
+	return result
+
+
+# Only nearest segments within radius can affect height. Candidate order preserves
+# the original first-segment tie breaking, including at crossings and endpoints.
+func _query_distance_cache(point_xz: Vector2) -> Dictionary:
+	var samples := _distance_samples
 	if samples.is_empty():
 		return {}
 
@@ -387,7 +674,15 @@ func _nearest_path_info_in_builder_space(builder: Node3D, point_xz: Vector2) -> 
 	var best_point := Vector2.ZERO
 	var best_tangent := Vector2.RIGHT
 	var best_y := 0.0
-	for i in range(samples.size() - 1):
+	var best_offset := 0.0
+	var key := Vector2i((point_xz / _distance_cell_size).floor())
+	var candidates: Array = _distance_cells.get(key, [])
+	if not _distance_overflow.is_empty():
+		candidates = candidates.duplicate()
+		candidates.append_array(_distance_overflow)
+		candidates.sort()
+	for i in candidates:
+		_distance_stats.segments_tested += 1
 		var a: Vector2 = samples[i].get("p", Vector2.ZERO)
 		var b: Vector2 = samples[i + 1].get("p", Vector2.ZERO)
 		var ay := float(samples[i].get("y", 0.0))
@@ -404,12 +699,14 @@ func _nearest_path_info_in_builder_space(builder: Node3D, point_xz: Vector2) -> 
 			best_point = q
 			best_tangent = ab.normalized()
 			best_y = lerpf(ay, by, t)
+			best_offset = lerpf(float(samples[i].get("offset", 0.0)), float(samples[i + 1].get("offset", 0.0)), t)
 
 	return {
 		"point": best_point,
 		"distance": best_d,
 		"tangent": best_tangent,
 		"y": best_y,
+		"offset": best_offset,
 	}
 
 
@@ -426,7 +723,9 @@ func _sample_centerline_points_in_builder_space(builder: Node3D, step: float) ->
 		})
 		return out
 
-	curve.bake_interval = maxf(0.05, minf(step, distance_sample_step))
+	var bake_step := maxf(0.05, minf(step, distance_sample_step))
+	if curve.bake_interval != bake_step:
+		curve.bake_interval = bake_step
 	var length := curve.get_baked_length()
 	var d := 0.0
 	while d < length:
@@ -455,4 +754,48 @@ func _sample_centerline_at_distance(builder: Node3D, dist: float, length: float)
 		"p": Vector2(p3.x, p3.z),
 		"tangent": t2,
 		"y": p3.y,
+		"offset": dist,
 	}
+
+
+func _prepare_control_offsets() -> void:
+	_control_offsets.clear()
+	if curve == null or curve.point_count == 0:
+		return
+	_control_offsets.append(0.0)
+	# Bake each Bezier span to avoid ambiguous closest-offset queries at crossings.
+	var total := 0.0
+	var spans := curve.point_count if curve.closed else curve.point_count - 1
+	for i in range(spans):
+		var next := (i + 1) % curve.point_count
+		var span := Curve3D.new()
+		span.bake_interval = curve.bake_interval
+		span.add_point(curve.get_point_position(i), Vector3.ZERO, curve.get_point_out(i))
+		span.add_point(curve.get_point_position(next), curve.get_point_in(next), Vector3.ZERO)
+		total += span.get_baked_length()
+		_control_offsets.append(total)
+	if total > 0.00001:
+		var scale_ := curve.get_baked_length() / total
+		for i in range(_control_offsets.size()):
+			_control_offsets[i] *= scale_
+
+
+func _point_variation(offset: float) -> Vector3:
+	if _control_offsets.is_empty():
+		return Vector3(maxf(0.001, radius), 1, 0)
+	var lo := 0
+	var hi := _control_offsets.size() - 1
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if _control_offsets[mid] <= offset:
+			lo = mid
+		else:
+			hi = mid - 1
+	var next := mini(lo + 1, _control_offsets.size() - 1)
+	var blend := clampf((offset - _control_offsets[lo]) / maxf(0.00001, _control_offsets[next] - _control_offsets[lo]), 0.0, 1.0)
+	var count := maxi(1, curve.point_count if curve != null else 1)
+	var a := lo % count
+	var b := next % count
+	return Vector3(lerpf(_point_radius(a), _point_radius(b), blend),
+		lerpf(_point_value(point_strength_scales, a, 1), _point_value(point_strength_scales, b, 1), blend),
+		lerpf(_point_value(point_height_offsets, a, 0), _point_value(point_height_offsets, b, 0), blend))

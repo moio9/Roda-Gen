@@ -15,6 +15,47 @@ children and collisions. Selecting MultiMesh with Item Scene assigned shows an
 editor warning explaining this fallback. MultiMesh output adds no collisions;
 the existing Item Mesh output also has none.
 
+`SplinePropArray3D > Custom Transform` provides **Position** in metres,
+**Rotation Degrees** and **Scale** with X/Y/Z fields. The scale's link icon
+changes all three axes together. These offsets apply to every instance in its
+local axes after spline alignment. Position/rotation default to zero and scale
+to one; the revert arrows reset each field. Existing saved transforms are kept.
+It works with Item Scene, Item Mesh and MultiMesh; regenerate props after editing
+it when automatic regeneration is off.
+
+For a continuous fence or wall, enable **Placement > Fit Segments To Path**.
+Each module fits between two shared samples of the selected edge, so curves,
+varying road widths and grades do not leave the longitudinal gaps produced by
+fixed pivot spacing. Set **Road Network Source** to the road generator to use
+its bank and height. **Spacing** is the sampling interval along the source path;
+choose approximately the module's intended length. The last module is shortened
+to the range end. Manual/span ranges and intersection clearance still apply.
+
+**Follow Generated Road Edge** is on by default for connected edge segments.
+With Road Network Source and Edge Uses Total Road Width, it follows the outer
+boundary of the final welded road, including lateral joins, and keeps the
+module's width outside that boundary. Outward Offset then adds clearance from
+the road to the inner face of the model. Separate parallel roads and bridges
+at another height do not move the fence. If a rigid segment would cross the
+road at a sharp turn or junction, that segment is omitted to leave the opening
+clear. The fence updates after the road regenerates, also at runtime; in the
+editor automatic updates still honor Auto Regenerate In Editor. Disable Follow
+Generated Road Edge to use the authored path edge and pivot-based offsets.
+
+Module length is measured from its mesh vertices after **Custom Transform**
+rotation and scale, including meshes under an Item Scene's child transforms.
+The resulting length axis must be local Z; use Rotation Degrees for models
+authored along X. Position offsets move the shared edge samples. Fitting adjusts
+only longitudinal scale and preserves the source scene's children and collisions.
+It connects rigid modules; it does not bend or weld their geometry, so thick
+modules can still show corner seams at sharp turns. Decorative overhangs count
+towards the measured length.
+
+Connected segments always align to their endpoints, ignore randomization and
+bypass incremental placement/output reuse. Item Mesh supports either rendering
+mode; Item Scene keeps individual nodes. Ordinary independent props retain their
+existing placement behavior when the option is off.
+
 `Multimesh Chunk Size` is the side length of world-space cells, in metres
 (default 100). Each source path gets a batch per occupied cell. Visibility is
 evaluated per batch, not per prop. Smaller cells allow finer culling but create

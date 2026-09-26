@@ -50,7 +50,8 @@ const ROAD_PRESET_RESOURCE = preload("./road_preset.gd")
 @export_range(0.0, 30.0, 0.1) var outer_wall_height := 0.0
 @export var outer_wall_material_override: Material
 @export_group("Mesh Orientation")
-@export var invert_faces := false
+## Godot culls counterclockwise faces; the generated road top faces forward when inverted.
+@export var invert_faces := true
 @export_enum("Curve Up", "World Up (Y)", "Bank Into Curve") var road_orientation_mode := 0: set = _set_road_orientation_mode
 @export_range(0.0, 45.0, 0.1, "suffix:deg") var road_bank_max_degrees := 8.0
 @export_range(0.0, 4.0, 0.01) var road_bank_strength := 1.0
@@ -114,6 +115,24 @@ var terrain_fill_outer_padding := 0.0
 @export_range(0.0, 50.0, 0.1) var terrain_rect_fill_interior_point_step := 0.0
 @export_range(0.0, 2.0, 0.001) var terrain_rect_fill_road_margin := 0.0
 @export_group("Weld")
+@export_subgroup("Lateral Joins")
+## Joins source profiles with a shared Lateral Join Layer or legacy Group.
+@export_range(0.0, 3.0, 0.01, "suffix:m") var lateral_join_max_gap := 0.35
+## Maximum overlap for discovering a facing-edge contact. A detected merge pair
+## can continue through a deeper partial overlap toward an angled endpoint.
+@export_range(0.0, 3.0, 0.01, "suffix:m") var lateral_join_max_overlap := 1.0
+@export_range(0.0, 1.0, 0.01, "suffix:m") var lateral_join_height_tolerance := 0.15
+## Zero keeps authored heights. Positive values automatically align joining
+## road rows to the host on every rebuild, preserving each row's banking.
+@export_range(0.0, 10.0, 0.1, "suffix:m") var lateral_join_height_blend_width := 0.0
+@export_range(0.0, 45.0, 0.5, "suffix:deg") var lateral_join_max_angle_degrees := 15.0
+## Extend full-width endpoints alongside a continuing host road with a smooth taper.
+## Zero keeps the original square ends. Does not alter source curves or widths.
+@export_range(0.0, 200.0, 0.5, "suffix:m") var lateral_join_transition_length := 12.0
+@export_range(4, 128, 1) var lateral_join_transition_subdivisions := 24
+## Width fraction along the taper, from zero to full width. Null uses a tangent S curve.
+@export var lateral_join_transition_profile: Curve
+@export_subgroup("Junctions")
 ## Contour mode retains complete road cross sections and builds separate corner bands.
 ## Legacy is kept for existing scenes. Unsupported contour clusters fall back with diagnostics.
 @export_enum("Legacy", "Contour (Experimental)") var junction_geometry_mode := 0
@@ -246,6 +265,8 @@ var _thread_cancel_token: Dictionary = {}
 var _pending_regenerate_signature := ""
 var _pending_regenerate_time_left := 0.0
 var _output_ready := false
+var _terrain_surface_data: Dictionary = {}
+var _terrain_surface_revision := 0
 var _marking_rows: Array = []
 var _marking_exclusions: Dictionary = {}
 
@@ -259,6 +280,7 @@ var _terrain_builder := preload("./road_terrain_builder.gd").new()
 var _terrain_influence_builder := preload("./road_terrain_influence_builder.gd").new()
 var _runtime_output := preload("./road_runtime_output.gd").new()
 var _marking_builder := preload("./road_marking_builder.gd").new()
+var _lateral_join := preload("./road_lateral_join.gd").new()
 var _lane_overlay_cache := preload("./road_lane_overlay_cache.gd").new()
 
 
@@ -387,6 +409,7 @@ func get_source_rebuild_stats() -> Dictionary:
 	stats["junction_search"] = _junction_builder.last_stats.duplicate()
 	stats["junction_geometry"] = _junction_builder.geometry_cache.last_stats.duplicate(true)
 	stats["contour_junctions"] = _junction_builder.contour.reports.duplicate(true)
+	stats["lateral_joins"] = _lateral_join.stats.duplicate(true)
 	stats["surface_normals"] = _mesh_builder.normal_cache_stats.duplicate(true)
 	# The worker updates strip counters. Do not read its mutable Dictionary until
 	# its result has been joined, including the finished-but-not-yet-applied case.
@@ -618,6 +641,7 @@ func regenerate() -> void:
 	var profile_resolve_start := _profile_start()
 	var paths := _resolve_paths()
 	_profile_log("main resolve paths", profile_resolve_start, "paths=%s source_paths=%s" % [paths.size(), source_paths.size()])
+	_lateral_join.configure(self, paths)
 	_debug_log("resolved paths: " + str(paths.size()) + " (source_paths=" + str(source_paths.size()) + ")")
 	if paths.is_empty():
 		if not source_paths.is_empty():
@@ -653,6 +677,7 @@ func regenerate() -> void:
 	var path_weld_strip_length: Array = sampled["path_weld_strip_length"]
 	_marking_rows = path_rows if markings_enabled else []
 	_marking_exclusions = {}
+	_lateral_join.prepare(verts, path_rows)
 
 	var profile_debug_visual_start := _profile_start()
 	_update_terrain_influence_debug_visual()
@@ -815,6 +840,8 @@ func _finalize_generation(
 	blocked_side_vertices: Dictionary = {}
 ) -> void:
 	var profile_finalize_start := _profile_start()
+	_lateral_join.apply(verts, normals, uvs, lane_indices, shoulder_indices, sidewalk_indices,
+		path_rows, _marking_exclusions, blocked_side_vertices)
 	if not _path_rows_need_terrain_or_walls(path_rows):
 		_finalize_generation_after_terrain_and_walls(
 			verts,
@@ -986,7 +1013,8 @@ func _finalize_generation_after_terrain_and_walls(
 		final_mesh
 	)
 	_profile_log("main assign mesh node", profile_assign_start)
-	_marking_builder.assign(self, verts, _marking_rows, _marking_exclusions)
+	_marking_builder.assign(self, verts, _marking_rows, _marking_exclusions,
+		_lateral_join.marking_cuts, lane_indices)
 	_last_signature = _build_signature()
 	_output_ready = true
 	_preset_controller.refresh_barriers(self)
@@ -2777,7 +2805,7 @@ func get_path_surface_frame(path: Path3D, distance: float) -> Dictionary:
 			prev_dist = maxf(0.0, prev_dist - probe)
 	var prev_mesh := path_to_mesh * curve.sample_baked(prev_dist, true)
 	var next_mesh := path_to_mesh * curve.sample_baked(next_dist, true)
-	var frame := _resolve_road_frame(curve, path_to_mesh, dist, length, center_mesh, prev_mesh, next_mesh)
+	var frame := _resolve_road_frame(curve, path_to_mesh, dist, length, center_mesh, prev_mesh, next_mesh, path)
 	var right_mesh: Vector3 = frame.get("right", Vector3.RIGHT)
 	var up_mesh: Vector3 = frame.get("up", Vector3.UP)
 	center_mesh.y += y_offset
@@ -3119,34 +3147,44 @@ func _resolve_road_frame(
 	length: float,
 	p_mesh: Vector3,
 	p_prev_mesh: Vector3,
-	p_next_mesh: Vector3
+	p_next_mesh: Vector3,
+	path: Path3D = null
 ) -> Dictionary:
+	var orientation_mode := road_orientation_mode
+	var bank_max := road_bank_max_degrees
+	var bank_strength := road_bank_strength
+	var bank_probe := road_bank_sample_distance
+	if path != null and path.has_method("has_orientation_overrides") and path.has_orientation_overrides():
+		orientation_mode = path.get_road_orientation_mode()
+		bank_max = path.get_road_bank_max_degrees()
+		bank_strength = path.get_road_bank_strength()
+		bank_probe = path.get_road_bank_sample_distance()
 	var world_up := _world_up_in_mesh_space()
 	var tangent := p_next_mesh - p_prev_mesh
 	# Explicitly closed World Up paths need the same cross section at both ends.
 	# One-sided probes leave a wedge at the loop seam, especially far from origin.
-	if road_orientation_mode == ROAD_ORIENTATION_WORLD_UP and length > 0.2 and curve.point_count > 2 \
+	if orientation_mode == ROAD_ORIENTATION_WORLD_UP and length > 0.2 and curve.point_count > 2 \
 			and curve.get_point_position(0).is_equal_approx(curve.get_point_position(curve.point_count-1)) \
 			and (dist < 0.1 or dist > length-0.1):
 		var wrapped := fposmod(dist,length)
 		tangent = path_to_mesh.basis * (curve.sample_baked(fposmod(wrapped+0.1,length),true) \
 			- curve.sample_baked(fposmod(wrapped-0.1,length),true))
-	if road_orientation_mode != ROAD_ORIENTATION_CURVE_UP:
+	if orientation_mode != ROAD_ORIENTATION_CURVE_UP:
 		tangent.y = 0.0
 	if tangent.length_squared() <= 0.000000000001:
 		tangent = p_next_mesh - p_mesh
-		if road_orientation_mode != ROAD_ORIENTATION_CURVE_UP:
+		if orientation_mode != ROAD_ORIENTATION_CURVE_UP:
 			tangent.y = 0.0
 	if tangent.length_squared() <= 0.000000000001:
 		tangent = p_mesh - p_prev_mesh
-		if road_orientation_mode != ROAD_ORIENTATION_CURVE_UP:
+		if orientation_mode != ROAD_ORIENTATION_CURVE_UP:
 			tangent.y = 0.0
 	if tangent.length_squared() <= 0.000000000001:
 		tangent = Vector3.FORWARD
 	tangent = tangent.normalized()
 
 	var up_mesh := world_up
-	if road_orientation_mode == ROAD_ORIENTATION_CURVE_UP:
+	if orientation_mode == ROAD_ORIENTATION_CURVE_UP:
 		var up_local := _sample_curve_up_vector(curve, dist)
 		up_mesh = (path_to_mesh.basis * up_local).normalized()
 		if up_mesh.length_squared() <= 0.000000000001:
@@ -3158,15 +3196,16 @@ func _resolve_road_frame(
 	if right.length_squared() <= 0.000000000001:
 		right = Vector3.RIGHT
 
-	if road_orientation_mode == ROAD_ORIENTATION_CURVE_UP:
+	if orientation_mode == ROAD_ORIENTATION_CURVE_UP:
 		up_mesh = tangent.cross(right).normalized()
 		if up_mesh.length_squared() <= 0.000000000001:
 			up_mesh = world_up
 	else:
 		up_mesh = world_up
 
-	if road_orientation_mode == ROAD_ORIENTATION_BANK_INTO_CURVE:
-		var bank_angle := _compute_curve_bank_angle(curve, path_to_mesh, dist, length)
+	if orientation_mode == ROAD_ORIENTATION_BANK_INTO_CURVE:
+		var bank_angle := _compute_curve_bank_angle(curve, path_to_mesh, dist, length,
+			bank_max, bank_strength, bank_probe)
 		if absf(bank_angle) > 0.00001:
 			var roll := Basis(tangent, bank_angle)
 			right = (roll * right).normalized()
@@ -3190,11 +3229,20 @@ func _compute_curve_bank_angle(
 	curve: Curve3D,
 	path_to_mesh: Transform3D,
 	dist: float,
-	length: float
+	length: float,
+	max_degrees: float = -1.0,
+	strength: float = -1.0,
+	sample_distance: float = -1.0
 ) -> float:
 	if curve == null or length <= 0.0001:
 		return 0.0
-	var probe := maxf(0.05, road_bank_sample_distance)
+	if max_degrees < 0.0:
+		max_degrees = road_bank_max_degrees
+	if strength < 0.0:
+		strength = road_bank_strength
+	if sample_distance < 0.0:
+		sample_distance = road_bank_sample_distance
+	var probe := maxf(0.05, sample_distance)
 	var prev_dist := maxf(0.0, dist - probe)
 	var next_dist := minf(length, dist + probe)
 	if is_equal_approx(prev_dist, next_dist):
@@ -3211,8 +3259,8 @@ func _compute_curve_bank_angle(
 	prev_dir = prev_dir.normalized()
 	next_dir = next_dir.normalized()
 	var signed_turn := atan2(prev_dir.cross(next_dir).y, prev_dir.dot(next_dir))
-	var max_bank := deg_to_rad(maxf(0.0, road_bank_max_degrees))
-	return clampf(-signed_turn * maxf(0.0, road_bank_strength), -max_bank, max_bank)
+	var max_bank := deg_to_rad(maxf(0.0, max_degrees))
+	return clampf(-signed_turn * maxf(0.0, strength), -max_bank, max_bank)
 
 
 func _resolve_paths() -> Array[Path3D]:
@@ -3261,7 +3309,17 @@ func _cleanup_legacy_generated_children() -> void:
 		child.queue_free()
 
 
+## Value arrays in road-local coordinates, excluding built-in terrain and walls.
+func get_terrain_surface_data() -> Dictionary:
+	return _terrain_surface_data.duplicate(true)
+
+func get_terrain_surface_revision() -> int:
+	return _terrain_surface_revision
+
 func _assign_mesh(mesh: ArrayMesh) -> void:
+	_terrain_surface_data = mesh.get_meta("_roda_terrain_surface", {})
+	mesh.remove_meta("_roda_terrain_surface")
+	_terrain_surface_revision += 1
 	var profile_total_start := _profile_start()
 	_debug_log("_assign_mesh called: surfaces=%s uploads=%s children_before=%s" % [_runtime_output._surface_count(mesh), mesh.get_surface_count(), get_child_count()])
 	var profile_node_start := _profile_start()
@@ -3459,6 +3517,8 @@ func _sync_generated_collision_shape(mi: MeshInstance3D, _mesh: ArrayMesh) -> vo
 
 
 func _clear_mesh_node() -> void:
+	_terrain_surface_data = {}
+	_terrain_surface_revision += 1
 	_output_ready = false
 	clear_source_generation_cache()
 	_runtime_output.clear(self)
@@ -3542,6 +3602,14 @@ func _clear_terrain_influence_debug_node() -> void:
 
 func _build_signature() -> String:
 	var parts: Array[String] = []
+	parts.append(str([lateral_join_max_gap, lateral_join_max_overlap,
+		lateral_join_height_tolerance, lateral_join_height_blend_width, lateral_join_max_angle_degrees,
+		lateral_join_transition_length, lateral_join_transition_subdivisions]))
+	if lateral_join_transition_profile != null:
+		for i in range(lateral_join_transition_profile.point_count):
+			parts.append(str([lateral_join_transition_profile.get_point_position(i),
+				lateral_join_transition_profile.get_point_left_tangent(i),
+				lateral_join_transition_profile.get_point_right_tangent(i)]))
 	parts.append(_marking_builder.signature(self))
 	parts.append(str(output_mode))
 	parts.append(str(output_chunk_size))
@@ -3634,6 +3702,14 @@ func _build_signature() -> String:
 	parts.append(str(paths.size()))
 	for p in paths:
 		parts.append(str(p.global_transform))
+		if p.has_method("get_lateral_join_group"):
+			parts.append(p.get_lateral_join_group())
+		if p.has_method("get_lateral_join_layers"):
+			parts.append(str(p.get_lateral_join_layers()))
+		if p.has_method("get_lateral_transition_length"):
+			parts.append(str([p.get_lateral_transition_length(false),p.get_lateral_transition_length(true)]))
+		if p.has_method("get_orientation_profile_signature"):
+			parts.append(p.get_orientation_profile_signature())
 		if _path_is_terrain_influence_only(p):
 			parts.append("terrain_influence_path")
 			if p.has_method("get_terrain_influence_width_profile_signature"):

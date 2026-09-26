@@ -357,7 +357,8 @@ func _build_row_block(path: Path3D, curve: Curve3D, path_to_mesh: Transform3D, l
 				prev_dist = max(0.0, prev_dist - 0.1)
 		var p_prev_mesh := path_to_mesh * curve.sample_baked(prev_dist, true)
 		var p_next_mesh := path_to_mesh * curve.sample_baked(next_dist, true)
-		var frame := _resolve_road_frame(curve, path_to_mesh, dist, length, p_mesh, p_prev_mesh, p_next_mesh)
+		var frame: Dictionary = _road._resolve_road_frame(curve, path_to_mesh, dist, length,
+			p_mesh, p_prev_mesh, p_next_mesh, path)
 		var right: Vector3 = frame.get("right", Vector3.RIGHT)
 		var up_mesh: Vector3 = frame.get("up", Vector3.UP)
 

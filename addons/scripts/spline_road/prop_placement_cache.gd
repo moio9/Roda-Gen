@@ -12,7 +12,7 @@ const PLACEMENT_SETTINGS := ["placement_mode", "spacing", "start_offset", "end_t
 	"default_lane_width", "edge_uses_total_road_width", "lateral_offset", "outward_offset", "vertical_offset",
 	"avoid_intersections", "avoid_own_path_endpoints", "avoid_other_path_endpoints",
 	"avoid_intersections_in_center_mode", "intersection_clear_radius", "ranges_mode", "range_source_mode",
-	"distance_ranges", "align_with_path", "align_with_curve_up", "tangent_sample_distance", "yaw_offset_degrees",
+	"distance_ranges", "align_with_path", "align_with_curve_up", "tangent_sample_distance", "yaw_offset_degrees", "custom_transform",
 	"longitudinal_jitter", "lateral_jitter", "vertical_jitter", "yaw_jitter_degrees",
 	"random_uniform_scale_min", "random_uniform_scale_max", "render_mode", "multimesh_chunk_size",
 	"snap_to_ground_enabled", "snap_to_ground_max_angle_deg", "snap_to_ground_slope_mode", "snap_to_ground_y_offset"]
@@ -66,6 +66,8 @@ func begin_build(props: Node3D) -> void:
 			_ground_provider = provider
 	if props.get_script() != load(props_script_path):
 		_bypass_reason = "custom_props"
+	elif props.fit_segments_to_path:
+		_bypass_reason = "connected_segments"
 	elif road == null or road.get_script() != load(road_script_path):
 		_bypass_reason = "no_compatible_road"
 	elif not road.incremental_generation_enabled:

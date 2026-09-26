@@ -4,6 +4,7 @@ extends RefCounted
 ## road triangle, then mapped onto that triangle. It does not float on a second spline.
 
 const NODE_NAME := "GeneratedRoadMarkings"
+const CUT := preload("./terrain_road_mesh_cut.gd")
 const OFF := 0
 const SOLID := 1
 const DASHED := 2
@@ -19,6 +20,11 @@ const SETTINGS := [
 var _settings: Dictionary = {}
 var last_stats: Dictionary = {}
 var _buckets: Array = []
+var _marking_cuts: Dictionary = {}
+var _active_path_id := -1
+var _suppress_joining_centerline := false
+var _final_asphalt: RefCounted
+var _asphalt_signature := 0
 const BLOCK_PAIRS := 32
 const MAX_CACHE_ENTRIES := 4096
 const MAX_CACHE_BYTES := 32 * 1024 * 1024
@@ -53,11 +59,12 @@ func clear(road: Node) -> void:
 	last_stats = {}
 
 
-func assign(road: Node3D, vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionary) -> void:
+func assign(road: Node3D, vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionary,
+		marking_cuts: Dictionary = {}, lane_indices := PackedInt32Array()) -> void:
 	if not bool(_settings.get("enabled", false)):
 		clear(road)
 		return
-	var mesh := build(vertices, path_rows, exclusions)
+	var mesh := build(vertices, path_rows, exclusions, marking_cuts, lane_indices)
 	if mesh.get_surface_count() == 0:
 		clear(road)
 		return
@@ -80,8 +87,16 @@ func assign(road: Node3D, vertices: PackedVector3Array, path_rows: Array, exclus
 		node.layers = source.layers
 
 
-func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionary = {}) -> ArrayMesh:
+func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionary = {},
+		marking_cuts: Dictionary = {}, lane_indices := PackedInt32Array()) -> ArrayMesh:
 	var started := Time.get_ticks_usec()
+	_marking_cuts = marking_cuts
+	_final_asphalt = null
+	_asphalt_signature = 0
+	if not marking_cuts.is_empty() and not lane_indices.is_empty():
+		_final_asphalt = CUT.new()
+		_final_asphalt.append_surface(vertices, lane_indices, Transform3D.IDENTITY)
+		_asphalt_signature = _final_asphalt.geometry_signature()
 	_buckets = _empty_buckets()
 	var next_cache: Dictionary = {}
 	var cache_bytes := 0
@@ -94,7 +109,9 @@ func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionar
 	for field in ["center_color", "line_color", "hatch_color", "material_override"]:
 		geometry_settings.erase(field)
 	for path_id in range(path_rows.size()):
+		_active_path_id = path_id
 		var rows: Array = path_rows[path_id]
+		_suppress_joining_centerline = _is_continuous_joining_lane(rows)
 		if not _incremental:
 			_build_rows(vertices, rows, exclusions.get(path_id, []))
 			pairs_rebuilt += maxi(0, rows.size() - 1)
@@ -151,6 +168,10 @@ func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionar
 		"pairs_reused": pairs_reused, "pairs_rebuilt": pairs_rebuilt, "cache_entries": _cache.size(),
 		"cache_bytes": cache_bytes, "bypassed": bypassed})
 	_buckets.clear()
+	_marking_cuts = {}
+	_active_path_id = -1
+	_suppress_joining_centerline = false
+	_final_asphalt = null
 	return mesh
 
 
@@ -174,6 +195,7 @@ func _append_buckets(source: Array) -> void:
 
 func _block_input(vertices: PackedVector3Array, rows: Array, exclusions: Array, settings: Dictionary) -> PackedByteArray:
 	var input: Array = []
+	var cuts: Array = []
 	for row: Dictionary in rows:
 		if not row.has("marking_layout"):
 			input.append(null)
@@ -183,8 +205,36 @@ func _block_input(vertices: PackedVector3Array, rows: Array, exclusions: Array, 
 			return PackedByteArray()
 		if mini(int(edges[2]), int(edges[3])) < 0 or maxi(int(edges[2]), int(edges[3])) >= vertices.size():
 			return PackedByteArray()
-		input.append([row.distance, row.lane_extents, row.marking_layout, vertices[edges[2]], vertices[edges[3]]])
-	return var_to_bytes([settings, exclusions, input])
+		input.append([row.distance, row.lane_extents, row.marking_layout, vertices[edges[2]], vertices[edges[3]],
+			row.get("lateral_left", []), row.get("lateral_right", []), row.get("lateral_transition", false)])
+		var cut = _marking_cuts.get(Vector2i(_active_path_id, int(row.get("row_idx", -1))), null)
+		if cut == null:
+			cuts.append(null)
+		else:
+			var geometry: Array = []
+			for triangle: Dictionary in cut.get("_triangles"):
+				geometry.append(triangle.points)
+			cuts.append(geometry)
+	return var_to_bytes([settings, exclusions, input, cuts, _asphalt_signature, _suppress_joining_centerline])
+
+
+func _is_continuous_joining_lane(rows: Array) -> bool:
+	if rows.size() < 3:
+		return false
+	var first := rows.size()
+	var last := -1
+	var joined_rows := 0
+	for i in range(rows.size()):
+		var joined := false
+		for side in ["lateral_left", "lateral_right"]:
+			for contact: Vector3 in rows[i].get(side, []):
+				if contact.z < 0.5:
+					joined = true
+		if joined:
+			first = mini(first, i)
+			last = i
+			joined_rows += 1
+	return first <= 1 and last >= rows.size() - 2 and joined_rows * 5 >= rows.size() * 4
 
 
 func _cache_entry_limit() -> int:
@@ -215,19 +265,36 @@ func _build_rows(vertices: PackedVector3Array, rows: Array, exclusions: Array) -
 		var e1: Array = row1["row_edges"]
 		var domain := PackedVector2Array([Vector2(s0, -ext0.x), Vector2(s0, ext0.y), Vector2(s1, -ext1.x), Vector2(s1, ext1.y)])
 		var points := PackedVector3Array([vertices[e0[2]], vertices[e0[3]], vertices[e1[2]], vertices[e1[3]]])
-		var context := {"domain": domain, "points": points, "exclusions": exclusions}
+		var context := {"domain": domain, "points": points, "exclusions": exclusions,
+			"cut": _marking_cuts.get(Vector2i(_active_path_id, int(row0.get("row_idx", i))), null)}
 		var layout0: Dictionary = row0["marking_layout"]
 		var layout1: Dictionary = row1["marking_layout"]
+		var transition := bool(row0.get("lateral_transition", false)) or bool(row1.get("lateral_transition", false))
+		# The joining path contributes a lane, not another opposing-traffic
+		# centerline. Its interior join boundary is painted by the host edge.
+		var joining := transition
+		for row: Dictionary in [row0, row1]:
+			for side in ["lateral_left", "lateral_right"]:
+				for contact: Vector3 in row.get(side, []):
+					if contact.z < 0.5:
+						joining = true
 		# A one-way profile has no opposing center divider.
-		if minf(ext0.x + ext1.x, ext0.y + ext1.y) > 0.001:
+		if not _suppress_joining_centerline and not joining and minf(ext0.x + ext1.x, ext0.y + ext1.y) > 0.001:
 			_line(context, Vector2(s0, 0), Vector2(s1, 0), int(_settings["center_style"]), 0)
 		for side in [-1, 1]:
 			var extent0 := ext0.x if side < 0 else ext0.y
 			var extent1 := ext1.x if side < 0 else ext1.y
+			var contact_key := "lateral_left" if side < 0 else "lateral_right"
+			var contacts: Array = row0.get(contact_key, [])
+			var next_contacts: Array = row1.get(contact_key, [])
+			var shared_edge := not contacts.is_empty() or not next_contacts.is_empty()
+			# A shared edge belongs to the joined asphalt, so it has no edge stripe.
+			# A partial contact must not leave a short lane stripe at the taper.
 			if maxf(extent0, extent1) <= 0.001:
 				continue
 			var inset := maxf(float(_settings["edge_inset"]), float(_settings["line_width"]) * 0.5)
-			_line(context, Vector2(s0, side * maxf(0.0, extent0 - inset)), Vector2(s1, side * maxf(0.0, extent1 - inset)), int(_settings["edge_style"]), 1)
+			if not shared_edge and not transition and not _edge_is_internal(context, side):
+				_line(context, Vector2(s0, side * maxf(0.0, extent0 - inset)), Vector2(s1, side * maxf(0.0, extent1 - inset)), int(_settings["edge_style"]), 1)
 			if not bool(layout0.get("enabled", false)):
 				continue
 			var width0 := maxf(0.01, float(layout0.get("lane_width", 3.5)))
@@ -237,9 +304,29 @@ func _build_rows(vertices: PackedVector3Array, rows: Array, exclusions: Array) -
 				# Clip separators to the painted interior, away from the edge stripe.
 				var interior := _side_polygon(s0, s1, side, 0.0, 0.0, maxf(0.0, extent0 - inset * 2.0), maxf(0.0, extent1 - inset * 2.0))
 				_line(context, Vector2(s0, side * lane * width0), Vector2(s1, side * lane * width1), int(_settings["lane_style"]), 1, interior)
-			if bool(_settings["hatching_enabled"]):
+			if bool(_settings["hatching_enabled"]) and not row0.get("lateral_transition",false) and not row1.get("lateral_transition",false):
 				_hatching(context, s0, s1, side, extent0, extent1, width0, width1, layout0, layout1, inset)
 
+
+
+func _edge_is_internal(context: Dictionary, side: int) -> bool:
+	if _final_asphalt == null:
+		return false
+	var points: PackedVector3Array = context.points
+	var hits := 0
+	for t in [0.25, 0.5, 0.75]:
+		var left := points[0].lerp(points[2], t)
+		var right := points[1].lerp(points[3], t)
+		var lateral := right - left
+		lateral.y = 0.0
+		if lateral.length_squared() < 0.000001:
+			continue
+		var edge := left if side < 0 else right
+		var probe := edge + lateral.normalized() * side * 0.75
+		var surface: Dictionary = _final_asphalt.nearest_height_at(probe, 0.02)
+		if surface.found and absf(float(surface.height) - probe.y) < 0.75:
+			hits += 1
+	return hits >= 2
 
 
 func _line(context: Dictionary, a: Vector2, b: Vector2, style: int, bucket: int, interior := PackedVector2Array()) -> void:
@@ -329,10 +416,11 @@ func _emit(polygon: PackedVector2Array, context: Dictionary, bucket: int) -> voi
 		for piece in pieces:
 			var clipped := _clip_convex(piece, triangle)
 			if clipped.size() >= 3:
-				_append_paint(clipped, triangle, surface, bucket)
+				_append_paint(clipped, triangle, surface, bucket, context.get("cut"))
 
 
-func _append_paint(polygon: PackedVector2Array, triangle: PackedVector2Array, surface: PackedVector3Array, bucket_id: int) -> void:
+func _append_paint(polygon: PackedVector2Array, triangle: PackedVector2Array, surface: PackedVector3Array,
+		bucket_id: int, cut = null) -> void:
 	var denominator := (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0])
 	if absf(denominator) < 0.0000001:
 		return
@@ -351,14 +439,36 @@ func _append_paint(polygon: PackedVector2Array, triangle: PackedVector2Array, su
 	var out_normals: PackedVector3Array = bucket["normals"]
 	var out_uvs: PackedVector2Array = bucket["uvs"]
 	for i in range(1, polygon.size() - 1):
-		var cross := (mapped[i] - mapped[0]).cross(mapped[i + 1] - mapped[0])
-		if cross.length_squared() < 0.000000000001:
+		var a := mapped[0]
+		var b := mapped[i]
+		var c := mapped[i + 1]
+		var ab := b - a
+		var ac := c - a
+		var area := ab.length_squared() * ac.length_squared() - ab.dot(ac) * ab.dot(ac)
+		if area < 0.000000000001:
 			continue
-		var corners := [0, i + 1, i] if cross.dot(normal) > 0.0 else [0, i, i + 1]
-		for index: int in corners:
-			out_vertices.append(mapped[index])
-			out_normals.append(normal)
-			out_uvs.append(Vector2(polygon[index].y, polygon[index].x))
+		var uv_a := Vector2(polygon[0].y, polygon[0].x)
+		var uv_b := Vector2(polygon[i].y, polygon[i].x)
+		var uv_c := Vector2(polygon[i + 1].y, polygon[i + 1].x)
+		var pieces: Array = cut.subtract(a, b, c) if cut != null else [PackedVector3Array([a, b, c])]
+		if _final_asphalt != null:
+			var on_asphalt: Array = []
+			for piece: PackedVector3Array in pieces:
+				on_asphalt.append_array(_final_asphalt.intersect_surface(piece[0], piece[1], piece[2]))
+			pieces = on_asphalt
+		for piece: PackedVector3Array in pieces:
+			var cross := (piece[1] - piece[0]).cross(piece[2] - piece[0])
+			if cross.length_squared() < 0.000000000001:
+				continue
+			var corners := [0, 2, 1] if cross.dot(normal) > 0.0 else [0, 1, 2]
+			for index: int in corners:
+				var point: Vector3 = piece[index]
+				var offset := point - a
+				var weight_b := (ac.length_squared() * offset.dot(ab) - ab.dot(ac) * offset.dot(ac)) / area
+				var weight_c := (ab.length_squared() * offset.dot(ac) - ab.dot(ac) * offset.dot(ab)) / area
+				out_vertices.append(point)
+				out_normals.append(normal)
+				out_uvs.append(uv_a * (1.0 - weight_b - weight_c) + uv_b * weight_b + uv_c * weight_c)
 	bucket["vertices"] = out_vertices
 	bucket["normals"] = out_normals
 	bucket["uvs"] = out_uvs

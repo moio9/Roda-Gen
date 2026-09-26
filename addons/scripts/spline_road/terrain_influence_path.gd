@@ -6,6 +6,11 @@ class_name TerrainInfluencePath3D
 @export_subgroup("Width")
 @export_range(0.2, 100.0, 0.1, "or_greater", "suffix:m") var influence_width := 6.0
 @export var point_widths := PackedFloat32Array()
+@export_subgroup("Terrain Continuation")
+## Requires TerrainTopologyBuilder3D. Extends this side to the generated bounds
+## or another nearer source. Choose the inward side to fill a closed loop.
+@export_enum("Local Band", "Continue To Terrain Bounds") var terrain_left_continuation := 0
+@export_enum("Local Band", "Continue To Terrain Bounds") var terrain_right_continuation := 0
 @export_subgroup("Flatten")
 @export_range(0.0, 100.0, 0.1, "or_greater", "suffix:m") var influence_blend := 3.0
 @export_range(0.0, 1.0, 0.01) var influence_strength := 1.0
@@ -180,6 +185,8 @@ func get_terrain_influence_profile_signature() -> String:
 		str(point_profile_heights.size()),
 		str(influence_use_profile_graph),
 		str(influence_profile_graph_samples),
+		str(terrain_left_continuation),
+		str(terrain_right_continuation),
 	]
 	for h in point_profile_heights:
 		parts.append(str(h))

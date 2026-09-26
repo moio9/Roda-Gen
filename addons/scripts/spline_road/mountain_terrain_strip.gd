@@ -36,7 +36,8 @@ class_name MountainTerrainStrip3D
 @export_range(-20.0, 20.0, 0.01, "suffix:m") var y_offset := 0.0
 @export var generate_left_side := true
 @export var generate_right_side := true
-@export var invert_faces := false
+## Show the upper surface with Godot's clockwise front-face convention.
+@export var invert_faces := true
 
 @export_group("Left Profile - Mountain Side")
 @export var left_profile_distances := PackedFloat32Array([0.0, 2.0, 8.0, 18.0, 30.0])

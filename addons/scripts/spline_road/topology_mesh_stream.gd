@@ -69,16 +69,16 @@ func append_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3,
 		_vertices.append(c)
 		_vertices.append(b)
 		_vertices.append(a)
-		_uvs.append(Vector2(c2.x * 0.05, c2.y * 0.05))
-		_uvs.append(Vector2(b2.x * 0.05, b2.y * 0.05))
-		_uvs.append(Vector2(a2.x * 0.05, a2.y * 0.05))
+		_uvs.append(c2)
+		_uvs.append(b2)
+		_uvs.append(a2)
 	else:
 		_vertices.append(a)
 		_vertices.append(b)
 		_vertices.append(c)
-		_uvs.append(Vector2(a2.x * 0.05, a2.y * 0.05))
-		_uvs.append(Vector2(b2.x * 0.05, b2.y * 0.05))
-		_uvs.append(Vector2(c2.x * 0.05, c2.y * 0.05))
+		_uvs.append(a2)
+		_uvs.append(b2)
+		_uvs.append(c2)
 	stats.vertices_buffered += 3
 	return true
 

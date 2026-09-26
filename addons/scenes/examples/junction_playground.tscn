@@ -1,6 +1,6 @@
 [gd_scene format=4 uid="uid://bll5ysegysvt"]
 
-[ext_resource type="Script" uid="uid://brhcf1sh6taui" path="res://addons/scenes/examples/example_camera.gd" id="camera"]
+[ext_resource type="Script" path="../../scripts/orbit_camera.gd" id="camera"]
 [ext_resource type="Script" uid="uid://cdaj44iqbrlce" path="res://addons/scripts/spline_road/spline_path_profile.gd" id="profile"]
 [ext_resource type="Script" uid="uid://b8dn8sx6ln6xf" path="res://addons/scripts/spline_road/road_network_creator.gd" id="road"]
 
@@ -436,7 +436,7 @@ current = true
 fov = 58.0
 far = 1200.0
 script = ExtResource("camera")
-example_title = "JUNCTION PLAYGROUND / Automatic Contour mode"
+title = "JUNCTION PLAYGROUND / Automatic Contour mode"
 
 [node name="Cross" type="Node3D" parent="." unique_id=1608447043]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -100, 0, 0)

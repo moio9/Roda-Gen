@@ -4,8 +4,11 @@ extends EditorPlugin
 const HISTORY = preload("../scripts/spline_road/road_editor_history.gd")
 const PROFILE_GIZMO = preload("./road_profile_gizmo.gd")
 var profile_gizmo: EditorNode3DGizmoPlugin
-var _redirecting_selection := false
 const POINT_PROPERTIES := {
+	"modifier_radius": "selected_point_radius",
+	"modifier_custom_radius": "selected_point_custom_radius",
+	"modifier_strength_scale": "selected_point_strength_scale",
+	"modifier_height_offset": "selected_point_height_offset",
 	"point_width": "selected_point_width",
 	"point_tilt": "selected_point_tilt",
 	"lanes_left": "selected_point_lanes_left",
@@ -22,6 +25,8 @@ func _enter_tree() -> void:
 	add_node_3d_gizmo_plugin(profile_gizmo)
 	EditorInterface.get_selection().selection_changed.connect(_handle_selection_changed)
 	add_undo_redo_inspector_hook_callback(_inspector_history)
+	if "--roda-height-modifier-tests" in OS.get_cmdline_user_args():
+		_run_height_modifier_tests.call_deferred()
 	if "--roda-editor-tests" in OS.get_cmdline_user_args():
 		_run_editor_tests.call_deferred()
 	if "--roda-preset-tests" in OS.get_cmdline_user_args():
@@ -68,42 +73,16 @@ func _inspector_history(history: Object, object: Object, property: String, value
 
 
 func _handle_selection_changed() -> void:
-	if _redirecting_selection:
-		return
 	var selection := EditorInterface.get_selection()
-	var selected_handles: Dictionary = {}
 	for node in selection.get_selected_nodes():
 		if not node.has_method("_get_profile") or not node.has_meta("width_point_index"):
 			continue
 		var profile: Node = node.call("_get_profile")
-		if profile == null or not profile.has_method("get_point_editor_transform"):
+		if profile == null or not profile.has_method("select_point_index"):
 			continue
-		if not selected_handles.has(profile):
-			selected_handles[profile] = []
-		selected_handles[profile].append(int(node.get("point_index")))
-	if selected_handles.is_empty():
-		return
-	_redirecting_selection = true
-	_redirect_handle_selection.call_deferred(selected_handles)
-
-
-func _redirect_handle_selection(selected_handles: Dictionary) -> void:
-	var selection := EditorInterface.get_selection()
-	selection.clear()
-	for profile: Node3D in selected_handles:
-		if not is_instance_valid(profile):
-			continue
-		selection.add_node(profile)
-		profile.update_gizmos()
-		for gizmo in profile.get_gizmos():
-			if gizmo is EditorNode3DGizmo and gizmo.get_plugin() == profile_gizmo:
-				profile.clear_subgizmo_selection()
-				for index in selected_handles[profile]:
-					profile.select_point_index(index)
-					profile.set_subgizmo_selection(gizmo, index, profile.get_point_editor_transform(index))
-				break
-		EditorInterface.edit_node(profile)
-	_redirecting_selection = false
+		# Keep the proxy selected so its own Inspector fields and native 3D
+		# transform controls remain available after clicking it.
+		profile.select_point_index(int(node.get("point_index")))
 
 
 func _run_editor_tests() -> void:
@@ -138,4 +117,10 @@ func _run_incremental_workflow_tests() -> void:
 
 func _run_terrain_startup_tests() -> void:
 	var tests: RefCounted = load("res://tools/check_terrain_startup_selection.gd").new()
+	await tests.run(self)
+
+
+func _run_height_modifier_tests() -> void:
+	var test_path: String = get_script().resource_path.get_base_dir().path_join("../tests/check_height_modifier_editor.gd")
+	var tests: RefCounted = load(test_path).new()
 	await tests.run(self)

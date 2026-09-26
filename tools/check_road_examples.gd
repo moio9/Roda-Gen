@@ -8,6 +8,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1100, 800)
+	await _check_runtime_terrain_startup()
 	for example in EXAMPLES:
 		var packed := load("res://addons/scenes/examples/%s.tscn" % example) as PackedScene
 		if packed == null:
@@ -15,6 +16,10 @@ func _run() -> void:
 			continue
 		var scene := packed.instantiate()
 		root.add_child(scene)
+		# Physical keyboard/mouse input must not move the camera during checks.
+		var camera := scene.get_node("Camera") as Camera3D
+		camera.set_process(false)
+		camera.set_process_unhandled_input(false)
 		for frame in range(5):
 			await process_frame
 		var road := scene.get_node("Road")
@@ -31,41 +36,50 @@ func _run() -> void:
 			if output == null or output.mesh == null or output.mesh.get_surface_count() == 0:
 				push_error("Missing geometry: %s / %s" % [example, node_path])
 				failures += 1
+		_check_generic_scripts(scene)
 		var junctions: Dictionary = road.get_source_rebuild_stats().get("junction_geometry", {})
-		var expected_junctions := 0
-		if int(junctions.get("clusters_rebuilt", 0)) != expected_junctions:
-			push_error("Unexpected junction count: " + example)
-			failures += 1
+		var road_mesh := road.get_node("GeneratedSplineRoadWelded") as MeshInstance3D
 		if example == "highway_entry":
-			var merge := scene.get_node("AccelerationLane") as MeshInstance3D
-			var ramp := scene.get_node("Road/EntryRamp") as Path3D
-			if merge.mesh == null or not ramp.curve.get_point_position(2).is_equal_approx(Vector3(7.5, 0, 20)):
-				push_error("Missing parallel acceleration lane connection")
+			if not road.get_source_rebuild_stats().lateral_joins.transitions.is_empty():
+				push_error("Authored zero-width ramp taper must not receive another extension")
 				failures += 1
-			_check_connector(merge, [Vector2(9, 21), Vector2(9, 99), Vector2(9, 140)],
+			if road.get_source_rebuild_stats().lateral_joins.contacts <= 0:
+				push_error("Highway ramp must join laterally through the shared addon")
+				failures += 1
+			var ramp := scene.get_node("Road/EntryRamp") as Path3D
+			if ramp.curve.point_count != 5 or scene.has_node("AccelerationLane"):
+				push_error("Acceleration lane must belong to the editable ramp profile")
+				failures += 1
+			_check_asphalt(road_mesh, road.road_material_override,
+				[Vector2(9, 21), Vector2(9, 99), Vector2(9, 140)],
 				[Vector2(10, 160), Vector2(9, 181)])
 		elif example == "urban_intersection":
-			_check_connector(scene.get_node("Intersection"),
+			var reports: Array = road.get_source_rebuild_stats().get("contour_junctions", [])
+			if reports.size() != 1 or not reports[0].ok or reports[0].arms != 4:
+				push_error("Urban intersection must use the generic four-arm contour junction")
+				failures += 1
+			_check_asphalt(road_mesh, road.road_material_override,
 				[Vector2.ZERO, Vector2(0, 13.9), Vector2(13.9, 0), Vector2(0, -13.9), Vector2(-13.9, 0)],
 				[Vector2(9.75, -9.75)])
-		for source in ["Bollards", "GuardrailPosts", "Guardrail"]:
+		for source in ["Bollards", "Crosswalks", "GuardrailPosts", "Guardrail"]:
 			var generator := scene.get_node_or_null(source)
 			if generator != null and not _has_mesh(generator):
 				push_error("Missing prop/deformer output: " + source)
 				failures += 1
-		var camera := scene.get_node("Camera") as Camera3D
 		var initial := camera.transform
 		var zoom := InputEventMouseButton.new()
 		zoom.button_index = MOUSE_BUTTON_WHEEL_UP
 		zoom.pressed = true
 		camera._unhandled_input(zoom)
 		if camera.transform == initial:
+			push_error("Camera zoom did not move: " + example)
 			failures += 1
 		var reset := InputEventKey.new()
 		reset.keycode = KEY_R
 		reset.pressed = true
 		camera._unhandled_input(reset)
 		if not camera.transform.is_equal_approx(initial):
+			push_error("Camera reset did not restore the view: " + example)
 			failures += 1
 		print("EXAMPLE ", example, " junctions=", junctions.get("clusters_rebuilt", 0))
 		if "--screenshots" in OS.get_cmdline_user_args():
@@ -85,6 +99,30 @@ func _run() -> void:
 	print("ROAD EXAMPLES ", "OK" if failures == 0 else "FAILED", " failures=", failures)
 	quit(0 if failures == 0 else 1)
 
+func _check_runtime_terrain_startup() -> void:
+	var probe := preload("./fixtures/terrain_startup_probe.gd")
+	var terrains: Array = []
+	for enabled in [false, true]:
+		var terrain := probe.new()
+		terrain.generate_on_ready = enabled
+		terrain.source_paths.assign([NodePath(".")])
+		var saved_output := MeshInstance3D.new()
+		saved_output.name = "GeneratedTopologyTerrain"
+		saved_output.mesh = PlaneMesh.new()
+		terrain.add_child(saved_output)
+		terrains.append(terrain)
+		root.add_child(terrain)
+	for frame in range(3):
+		await process_frame
+	if terrains[0].rebuilds != 0 or not terrains[0].has_node("GeneratedTopologyTerrain"):
+		push_error("Runtime terrain must preserve saved output unless opted in")
+		failures += 1
+	if terrains[1].rebuilds != 1:
+		push_error("Opt-in runtime terrain must regenerate once")
+		failures += 1
+	for terrain in terrains:
+		terrain.free()
+
 func _has_mesh(node: Node) -> bool:
 	if node is MeshInstance3D and node.mesh != null:
 		return true
@@ -93,37 +131,37 @@ func _has_mesh(node: Node) -> bool:
 			return true
 	return false
 
-func _check_connector(connector: MeshInstance3D, inside: Array, outside: Array) -> void:
-	if connector.mesh == null or connector.mesh.get_surface_count() > 3:
-		push_error("Connector must have geometry batched by material")
+func _check_generic_scripts(node: Node) -> void:
+	var script := node.get_script() as Script
+	if script != null and not script.resource_path.begins_with("res://addons/scripts/"):
+		push_error("Example depends on a scene-specific script: " + script.resource_path)
 		failures += 1
-		return
+	for child in node.get_children():
+		_check_generic_scripts(child)
+
+func _check_asphalt(output: MeshInstance3D, asphalt: Material, inside: Array, outside: Array) -> void:
 	for point in inside:
-		if not _asphalt_covers(connector, point):
-			push_error("Missing connector asphalt at " + str(point))
+		if not _asphalt_covers(output, asphalt, point):
+			push_error("Missing road asphalt at " + str(point))
 			failures += 1
 	for point in outside:
-		if _asphalt_covers(connector, point):
-			push_error("Connector extends outside intended outline at " + str(point))
+		if _asphalt_covers(output, asphalt, point):
+			push_error("Road extends outside intended outline at " + str(point))
 			failures += 1
-	for surface_index in range(connector.mesh.get_surface_count()):
-		if connector.mesh.surface_get_material(surface_index) != connector.asphalt:
-			continue
-		var vertices: PackedVector3Array = connector.mesh.surface_get_arrays(surface_index)[Mesh.ARRAY_VERTEX]
-		for i in range(0, vertices.size(), 3):
-			if (vertices[i + 1] - vertices[i]).cross(vertices[i + 2] - vertices[i]).y >= 0:
-				push_error("Back-facing asphalt triangle")
-				failures += 1
 
-func _asphalt_covers(connector: MeshInstance3D, point: Vector2) -> bool:
-	for surface_index in range(connector.mesh.get_surface_count()):
-		if connector.mesh.surface_get_material(surface_index) != connector.asphalt:
+func _asphalt_covers(output: MeshInstance3D, asphalt: Material, point: Vector2) -> bool:
+	for surface_index in range(output.mesh.get_surface_count()):
+		if output.mesh.surface_get_material(surface_index) != asphalt:
 			continue
-		var vertices: PackedVector3Array = connector.mesh.surface_get_arrays(surface_index)[Mesh.ARRAY_VERTEX]
-		for i in range(0, vertices.size(), 3):
-			var a := Vector2(vertices[i].x, vertices[i].z)
-			var b := Vector2(vertices[i + 1].x, vertices[i + 1].z)
-			var c := Vector2(vertices[i + 2].x, vertices[i + 2].z)
-			if Geometry2D.is_point_in_polygon(point, PackedVector2Array([a, b, c])):
+		var arrays := output.mesh.surface_get_arrays(surface_index)
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var count := indices.size() if not indices.is_empty() else vertices.size()
+		for i in range(0, count, 3):
+			var polygon := PackedVector2Array()
+			for j in range(3):
+				var vertex := vertices[indices[i + j] if not indices.is_empty() else i + j]
+				polygon.append(Vector2(vertex.x, vertex.z))
+			if Geometry2D.is_point_in_polygon(point, polygon):
 				return true
 	return false

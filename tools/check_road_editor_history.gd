@@ -58,12 +58,24 @@ func run(plugin: EditorPlugin) -> void:
 	EditorInterface.edit_node(profile)
 	await _frames(5)
 
-	# Selecting a legacy width handle activates the profile's proper subgizmo.
+	# Selecting a width handle keeps its own Inspector and transform controls.
 	var handle: MeshInstance3D = profile.get_node("__WidthHandles/Handle_001")
 	EditorInterface.get_selection().clear()
 	EditorInterface.get_selection().add_node(handle)
 	await _frames(5)
-	_check(profile in EditorInterface.get_selection().get_selected_nodes(), "Width handle selection did not activate the profile gizmo")
+	_check(handle in EditorInterface.get_selection().get_selected_nodes(), "Width handle selection was replaced by its parent")
+	_check(profile.selected_point_index == 1, "Width handle did not select its source point")
+	_check(_find_property(EditorInterface.get_inspector(), "point_width") != null, "Width handle Inspector controls were not shown")
+	var handle_move_before: Dictionary = profile.capture_editor_state()
+	handle.position += Vector3(1.25, 0.0, 0.0)
+	await _frames(5)
+	_check(profile.curve.get_point_position(1).distance_to(handle_move_before.curve_points[1][0] + Vector3(1.25, 0.0, 0.0)) < 0.001, "Moving selected handle did not move its curve point")
+	_check(handle in EditorInterface.get_selection().get_selected_nodes(), "Moving a width handle lost its selection")
+	profile.restore_editor_state(handle_move_before)
+	# The profile gizmo remains available when the route itself is selected.
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(profile)
+	await _frames(3)
 	var gizmo: EditorNode3DGizmo
 	for candidate in profile.get_gizmos():
 		if candidate is EditorNode3DGizmo and candidate.get_plugin() == plugin.profile_gizmo:
@@ -72,7 +84,6 @@ func run(plugin: EditorPlugin) -> void:
 	if gizmo == null:
 		_tree.quit(1)
 		return
-	_check(gizmo.is_subgizmo_selected(1), "Width handle did not select its control point")
 	var gizmo_plugin: EditorNode3DGizmoPlugin = plugin.profile_gizmo
 	for axis in [Vector3.RIGHT, Vector3.UP, Vector3.FORWARD]:
 		var before: Dictionary = profile.capture_editor_state()

@@ -5,6 +5,7 @@ extends RefCounted
 var removed_vertices: Dictionary = {}
 var regions: Array[Dictionary] = []
 var reports: Array[Dictionary] = []
+var _uv_scale := 0.2
 
 func clear() -> void:
 	removed_vertices.clear()
@@ -16,7 +17,8 @@ func _xz(v: Vector3) -> Vector2:
 
 func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 		uvs: PackedVector2Array, surfaces: Array, sockets: Array[Dictionary],
-		cluster: Array, paths: Array, attempt := 0) -> bool:
+		cluster: Array, paths: Array, attempt := 0, fit_short_arms := false) -> bool:
+	_uv_scale = maxf(0.001, float(road.uv_length_scale))
 	var selected: Dictionary = {}
 	var center := Vector3.ZERO
 	for id in cluster:
@@ -27,11 +29,32 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 		selected[path_id].append(int(socket.row_idx))
 		center += Vector3(socket.position)
 	center /= cluster.size()
-	var radius := float(road.junction_corner_radius)
+	# A nearby road end is not necessarily part of an interior junction. Keep
+	# a continuing host arm when its endpoint is outside the other road's asphalt;
+	# an endpoint already inside that asphalt is absorbed by the junction.
+	for path_id in selected:
+		var ids: Array = selected[path_id]
+		var rows: Array = paths[path_id]
+		var has_interior := false
+		for index in ids:
+			has_interior = has_interior or (index > 0 and index < rows.size()-1)
+		if not has_interior:
+			continue
+		for endpoint in [0,rows.size()-1]:
+			if not ids.has(endpoint):
+				continue
+			var inside := false
+			for other in selected:
+				if other != path_id and _inside_lane(rows[endpoint].position,paths[other],verts):
+					inside = true
+			if not inside:
+				ids.erase(endpoint)
+	var radius := float(road.junction_corner_radius) * (pow(0.5,attempt) if fit_short_arms else 1.0)
 	var clearance := radius
 	for id in cluster:
 		clearance = maxf(clearance, radius + float(sockets[id].width) * 0.5)
-	clearance *= pow(1.6, attempt)
+	var retreat_scale := 1.0 if fit_short_arms else pow(1.6, attempt)
+	clearance *= retreat_scale
 	var arms: Array[Dictionary] = []
 	var arm_retreats: Array[Dictionary] = []
 	var discarded: Dictionary = {}
@@ -52,12 +75,19 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 			# Each arm has its own width, requested space, and available length.
 			# Keep one original segment at the far end instead of rejecting the
 			# entire junction when another arm's larger retreat cannot fit here.
-			var requested := (radius + float(rows[anchor].width) * 0.5) * pow(1.6, attempt)
+			var requested := (radius + float(rows[anchor].width) * 0.5) * retreat_scale
 			var limit := 1 if direction < 0 else rows.size() - 2
 			if (limit - anchor) * direction <= 0:
 				return _reject("No room to retain a road segment on path %d, side %d" % [path_id, direction])
+			var anchor_direction := (Vector3(rows[anchor+direction].position)-Vector3(rows[anchor].position)).normalized()
 			while index != limit:
-				index += direction
+				var next: int = index+direction
+				var next_direction := (Vector3(rows[next+direction].position)-Vector3(rows[next].position)).normalized()
+				# Keep the retained arm on the approach to this junction. Retreating
+				# around an upstream bend can turn a real crossing into parallel arms.
+				if index != anchor and anchor_direction.dot(next_direction) < cos(deg_to_rad(15.0)):
+					break
+				index = next
 				if _xz(Vector3(rows[index].position) - center).length() >= requested:
 					break
 			var actual := _xz(Vector3(rows[index].position) - center).length()
@@ -176,7 +206,7 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 		polygon.append(_xz(point))
 	if not _simple(polygon):
 		if attempt < 3:
-			return build(road, verts, normals, uvs, surfaces, sockets, cluster, paths, attempt + 1)
+			return build(road, verts, normals, uvs, surfaces, sockets, cluster, paths, attempt + 1, fit_short_arms or _has_limited_arm(arm_retreats))
 		return _reject("Could not construct non-overlapping asphalt within available arm lengths", arm_retreats)
 	var triangles := Geometry2D.triangulate_polygon(polygon)
 	if triangles.is_empty():
@@ -187,7 +217,7 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 			outer_polygon.append(_xz(point))
 	if not _simple(outer_polygon):
 		if attempt < 3:
-			return build(road, verts, normals, uvs, surfaces, sockets, cluster, paths, attempt + 1)
+			return build(road, verts, normals, uvs, surfaces, sockets, cluster, paths, attempt + 1, fit_short_arms or _has_limited_arm(arm_retreats))
 		return _reject("Could not construct non-overlapping sidewalks at authored widths within available arm lengths", arm_retreats)
 	# Nonplanar junctions need interior support. Ear clipping in XZ alone can
 	# connect almost-collinear boundary vertices with different heights and
@@ -213,8 +243,10 @@ func build(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
 	for corner in corners:
 		_band(corner.lane, corner.shoulder, surfaces[1], verts, normals, uvs, bool(road.invert_faces))
 		_band(corner.shoulder, corner.sidewalk, surfaces[2], verts, normals, uvs, bool(road.invert_faces))
+	_clip_overlapping_bands(road,verts,normals,uvs,surfaces,paths,selected,base)
 	reports.append({"ok": true, "arms": arms.size(), "corners": corners.size(), "center": center,
 		"retreat": clearance, "arm_retreats": arm_retreats, "retries": attempt,
+		"requested_radius": float(road.junction_corner_radius), "fitted_radius": radius,
 		"interior_support": not interior.is_empty()})
 	return true
 
@@ -268,6 +300,73 @@ func _connection_center(a: Dictionary, b: Dictionary, t: float, blend: float) ->
 	var curve := p * u * u * u + c1 * 3.0 * u * u * t + c2 * 3.0 * u * t * t + q * t * t * t
 	return p.lerp(q, t).lerp(curve, blend)
 
+func _clip_overlapping_bands(road: Node, verts: PackedVector3Array, normals: PackedVector3Array,
+		uvs: PackedVector2Array, surfaces: Array, paths: Array, selected: Dictionary, base: int) -> void:
+	var eligible: Dictionary = {}
+	var height_gap := float(road.lateral_join_height_tolerance)
+	var band_reach := 0.0
+	for path_id in selected:
+		for row: Dictionary in paths[path_id]:
+			var e: Array = row.row_edges
+			for id in e:
+				eligible[id] = true
+			for side in [[0,1,2],[5,4,3]]:
+				band_reach = maxf(band_reach,_xz(verts[e[side[0]]]-verts[e[side[2]]]).length())
+				height_gap = maxf(height_gap,absf(verts[e[side[0]]].y-verts[e[side[2]]].y)+0.01)
+				height_gap = maxf(height_gap,absf(verts[e[side[1]]].y-verts[e[side[2]]].y)+0.01)
+	for id in range(base,verts.size()):
+		eligible[id] = true
+	var lane := PackedInt32Array()
+	var junction_lane := PackedInt32Array()
+	for i in range(0,surfaces[0].size(),3):
+		if eligible.has(surfaces[0][i]) and eligible.has(surfaces[0][i+1]) and eligible.has(surfaces[0][i+2]):
+			lane.append_array([surfaces[0][i],surfaces[0][i+1],surfaces[0][i+2]])
+			if surfaces[0][i] >= base:
+				junction_lane.append_array([surfaces[0][i],surfaces[0][i+1],surfaces[0][i+2]])
+	if lane.is_empty():
+		return
+	var cut := preload("./terrain_road_mesh_cut.gd").new()
+	cut.append_surface(verts,junction_lane,Transform3D.IDENTITY)
+	cut.clip_surface(verts,normals,uvs,surfaces[1],eligible,height_gap)
+	cut.clip_surface(verts,normals,uvs,surfaces[2],eligible,height_gap)
+	# Preserve the source row indices away from this junction: lateral joining
+	# still needs them to remove interior bands elsewhere on these same paths.
+	var original_eligible := eligible
+	eligible = {}
+	var bounds := Rect2(_xz(verts[base]),Vector2.ZERO)
+	for id in range(base,verts.size()):
+		eligible[id] = true
+		bounds = bounds.expand(_xz(verts[id]))
+	bounds = bounds.grow(band_reach)
+	for surface in [surfaces[1],surfaces[2]]:
+		for i in range(0,surface.size(),3):
+			var ids := [surface[i],surface[i+1],surface[i+2]]
+			if not original_eligible.has(ids[0]) or not original_eligible.has(ids[1]) or not original_eligible.has(ids[2]):
+				continue
+			var triangle_bounds := Rect2(_xz(verts[ids[0]]),Vector2.ZERO).expand(_xz(verts[ids[1]])).expand(_xz(verts[ids[2]]))
+			if bounds.intersects(triangle_bounds):
+				for id in ids:
+					eligible[id] = true
+	cut = preload("./terrain_road_mesh_cut.gd").new()
+	cut.append_surface(verts,lane,Transform3D.IDENTITY)
+	cut.clip_surface(verts,normals,uvs,surfaces[1],eligible,height_gap)
+	cut.clip_surface(verts,normals,uvs,surfaces[2],eligible,height_gap)
+
+func _has_limited_arm(arms: Array[Dictionary]) -> bool:
+	for arm in arms:
+		if arm.limited:
+			return true
+	return false
+
+func _inside_lane(point: Vector3, rows: Array, verts: PackedVector3Array) -> bool:
+	for i in range(rows.size()-1):
+		var a: Array = rows[i].row_edges
+		var b: Array = rows[i+1].row_edges
+		var polygon := PackedVector2Array([_xz(verts[a[2]]),_xz(verts[a[3]]),_xz(verts[b[3]]),_xz(verts[b[2]])])
+		if Geometry2D.is_point_in_polygon(_xz(point),polygon):
+			return true
+	return false
+
 func _reject(reason: String, arm_retreats: Array[Dictionary] = []) -> bool:
 	reports.append({"ok": false, "reason": reason, "arm_retreats": arm_retreats})
 	return false
@@ -287,7 +386,7 @@ func _vertex(point: Vector3, verts: PackedVector3Array, normals: PackedVector3Ar
 	var id := verts.size()
 	verts.append(point)
 	normals.append(Vector3.UP)
-	uvs.append(_xz(point))
+	uvs.append(_xz(point) * _uv_scale)
 	return id
 
 func _triangle(indices: PackedInt32Array, a: int, b: int, c: int, verts: PackedVector3Array, invert: bool) -> void:

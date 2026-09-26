@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="SplineRoadPreset" format=3 uid="uid://ciqt7cjn64kbk"]
 
-[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/scripts/spline_road/road_preset.gd" id="1"]
+[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/roda-gen/scripts/spline_road/road_preset.gd" id="1"]
 
 [sub_resource type="StandardMaterial3D" id="Steel"]
 resource_name = "Galvanized Rail"

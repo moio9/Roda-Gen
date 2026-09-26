@@ -13,7 +13,9 @@ const PROFILE_SETTINGS := ["default_width", "point_widths", "lane_profile_enable
 	"default_lanes_left", "default_lanes_right", "default_lane_width", "point_lanes_left",
 	"point_lanes_right", "point_lane_widths", "point_lane_transition_lengths",
 	"shoulder_left_width", "shoulder_right_width", "sidewalk_left_width", "sidewalk_right_width",
-	"sidewalk_height", "outer_wall_height", "terrain_override_enabled", "terrain_left_width", "terrain_right_width"]
+	"sidewalk_height", "outer_wall_height", "terrain_override_enabled", "terrain_left_width", "terrain_right_width",
+	"road_orientation_override_enabled", "road_orientation_mode", "road_bank_max_degrees",
+	"road_bank_strength", "road_bank_sample_distance"]
 const EDGE_SETTINGS := ["shoulder_left_width", "shoulder_right_width", "sidewalk_left_width", "sidewalk_right_width",
 	"sidewalk_height", "outer_wall_height", "terrain_override_enabled", "terrain_left_width", "terrain_right_width"]
 
@@ -87,6 +89,11 @@ func block_key(path: Path3D, distances: Variant, transform: Transform3D) -> Pack
 	var bank_probe_states: Array[bool] = []
 	var mode: int = _road.road_orientation_mode
 	var probe: float = maxf(0.05, _road.road_bank_sample_distance)
+	var orientation_settings: Variant = null
+	if path.has_method("has_orientation_overrides") and path.has_orientation_overrides():
+		mode = path.get_road_orientation_mode()
+		probe = path.get_road_bank_sample_distance()
+		orientation_settings = path.get_orientation_profile_signature()
 	for distance in distances:
 		var previous := maxf(0.0, distance - 0.1)
 		var next := minf(length, distance + 0.1)
@@ -108,7 +115,8 @@ func block_key(path: Path3D, distances: Variant, transform: Transform3D) -> Pack
 			supports.append(curve.sample_baked(bank_next, true))
 			bank_probe_states.append(length <= 0.0001 or is_equal_approx(bank_previous, bank_next))
 	last_stats.dependency_rows_checked += distances.size()
-	return var_to_bytes([_settings, transform, distances, supports, bank_probe_states, _profile_support(path, distances, length)])
+	return var_to_bytes([_settings, transform, distances, supports, bank_probe_states,
+		orientation_settings, _profile_support(path, distances, length)])
 
 
 func _profile_support(path: Path3D, distances: Variant, length: float) -> Array:

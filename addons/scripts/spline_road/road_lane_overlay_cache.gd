@@ -55,6 +55,16 @@ func clear() -> void:
 
 func rows(path: Path3D, inv_global: Transform3D, left_side: bool, lane: int,
 		distances: PackedFloat32Array, length: float) -> Dictionary:
+	return _rows(path, inv_global, left_side, lane, distances, length, 0)
+
+
+func range_rows(path: Path3D, inv_global: Transform3D, left_side: bool, lane: int,
+		distances: PackedFloat32Array, length: float, first_row: int) -> Dictionary:
+	return _rows(path, inv_global, left_side, lane, distances, length, first_row)
+
+
+func _rows(path: Path3D, inv_global: Transform3D, left_side: bool, lane: int,
+		distances: PackedFloat32Array, length: float, first_row: int) -> Dictionary:
 	if not _enabled or not _source.can_cache(path):
 		last_stats.paths_bypassed += 1
 		last_stats.rows_rebuilt += distances.size()
@@ -64,7 +74,7 @@ func rows(path: Path3D, inv_global: Transform3D, left_side: bool, lane: int,
 		_source.path_key(path, distances, inv_global * path.global_transform)])
 	for start in range(0, distances.size(), BLOCK_ROWS):
 		var block := distances.slice(start, mini(start + BLOCK_ROWS, distances.size()))
-		var key := "%d:%d:%d:%d" % [path.get_instance_id(), int(left_side), lane, start]
+		var key := "%d:%d:%d:%d" % [path.get_instance_id(), int(left_side), lane, first_row + start]
 		var old: Dictionary = _entries.get(key, {})
 		# The frame API clamps distance before sampling. Width/layout APIs receive
 		# the original float32 sample; preserve both semantics in the exact key.

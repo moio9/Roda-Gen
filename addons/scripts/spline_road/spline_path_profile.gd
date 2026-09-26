@@ -2,6 +2,8 @@
 extends Path3D
 class_name SplinePathProfile3D
 
+const LANE_APPEARANCE = preload("./road_lane_appearance.gd")
+
 @export_group("Road")
 @export_subgroup("Width")
 @export_range(0.2, 50.0, 0.1) var default_width := 6.0
@@ -26,6 +28,12 @@ class_name SplinePathProfile3D
 @export_tool_button("Apply Lane Changes") var apply_lane_changes_action := apply_lane_changes
 @export_tool_button("Rebuild Road + Terrain") var rebuild_lane_terrain_action := rebuild_lane_terrain
 @export_tool_button("Rebuild Lane Dependents (Slow)") var rebuild_lane_dependents_action := rebuild_lane_dependents
+@export_subgroup("Lane Appearance")
+## Per-lane markings and asphalt material, optionally limited to a distance range.
+## Lane 1 is nearest the center; a later entry wins for the same lane/property.
+@export var lane_appearance_overrides: Array[LANE_APPEARANCE] = []
+## Select a range's StartHandle/EndHandle to move its limits along the lane.
+@export var show_lane_appearance_handles := true
 @export_subgroup("Edges")
 @export_range(0.0, 15.0, 0.1) var shoulder_left_width := 0.0
 @export_range(0.0, 15.0, 0.1) var shoulder_right_width := 0.0
@@ -140,6 +148,7 @@ var _control_offsets_cache_curve_id := 0
 var _control_offsets_cache_point_count := -1
 var _connected_curve_for_offsets: Curve3D
 var _restoring_editor_state := false
+var _appearance_controls := preload("./road_lane_appearance_controls.gd").new()
 
 
 func capture_editor_state() -> Dictionary:
@@ -253,6 +262,9 @@ func _ready() -> void:
 	set_process(true)
 	_ensure_control_offset_curve_connection()
 	if not Engine.is_editor_hint():
+		var ranges := get_node_or_null("__LaneAppearanceHandles")
+		if ranges != null:
+			ranges.queue_free()
 		return
 	_sync_point_widths()
 	if lane_profile_enabled or _has_lane_profile_storage():
@@ -260,6 +272,7 @@ func _ready() -> void:
 	_lane_signature_seen = _build_live_lane_signature()
 	_refresh_selected_point_fields()
 	_rebuild_preview()
+	_appearance_controls.sync(self, _build_signature())
 
 
 func _process(_delta: float) -> void:
@@ -275,6 +288,7 @@ func _process(_delta: float) -> void:
 		_pull_selected_from_editor_selection()
 
 	var sig := _build_signature()
+	_appearance_controls.sync(self, sig)
 	if moved_curve_points:
 		_last_signature = ""
 	if sig == _last_signature and not _width_preview_needs_rebuild():
@@ -876,6 +890,16 @@ func _build_live_lane_signature() -> String:
 	for transition in point_lane_transition_curves:
 		parts.append(_curve_resource_signature(transition))
 	return "|".join(parts)
+
+
+func get_lane_appearance_overrides() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for appearance in lane_appearance_overrides:
+		if appearance != null:
+			var rule := appearance.snapshot()
+			if not rule.is_empty():
+				result.append(rule)
+	return result
 
 
 func get_edge_profile_signature() -> String:

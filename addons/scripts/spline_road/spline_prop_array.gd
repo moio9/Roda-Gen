@@ -160,29 +160,41 @@ func _ready() -> void:
 
 
 func _ensure_default_span() -> void:
-	# A prop array placed directly under a spline is ready to use with one node.
 	var parent_path := get_parent() as Path3D
-	if parent_path == null:
-		return
-	if source_paths.is_empty():
+	if source_paths.is_empty() and parent_path != null:
 		source_paths = [NodePath("..")]
+	# A full-length include span preserves the default placement. Do not turn a
+	# manual range into full coverage, or exclude the whole path in Exclude mode.
+	if ranges_mode != 1 or range_source_mode != RANGE_SOURCE_SPANS:
+		return
 	for child in get_children():
 		if child != null and child.has_method("is_spline_prop_span") and bool(child.call("is_spline_prop_span")):
 			return
+	if source_paths.size() != 1 or source_paths[0].is_empty():
+		return
+	var path := get_node_or_null(source_paths[0]) as Path3D
+	if path == null or path.curve == null or path.curve.point_count < 2:
+		return
+	if _path_is_terrain_influence_only(path) and not include_terrain_influence_paths:
+		return
 
 	var span := PROP_SPAN_SCRIPT.new() as Node3D
 	if span == null:
 		return
 	span.name = "PropSpan"
-	span.set("target_path", NodePath("../.."))
+	# The span is one level below this array, including when Source Paths points
+	# to a sibling road instead of the array being a child of that road's path.
+	span.set("target_path", NodePath("../" + str(get_path_to(path))))
 	span.set("start_offset", 0.0)
-	if parent_path.curve != null:
-		span.set("end_offset", maxf(0.0, parent_path.curve.get_baked_length()))
+	span.set("end_offset", maxf(0.0, path.curve.get_baked_length()))
 	add_child(span)
 	_assign_editor_owner(span)
 
 
 func _process(_delta: float) -> void:
+	if Engine.is_editor_hint():
+		# Source Paths is usually assigned after the new node has entered the tree.
+		_ensure_default_span()
 	if _terrain_regeneration_pending:
 		if not _can_generate():
 			return
@@ -297,6 +309,7 @@ func _property_get_revert(property: StringName) -> Variant:
 func regenerate() -> void:
 	if not _can_generate():
 		return
+	_ensure_default_span()
 	_terrain_regeneration_pending = false
 	if Engine.is_editor_hint():
 		update_configuration_warnings()

@@ -20,6 +20,7 @@ const POINT_PROPERTIES := {
 
 
 func _enter_tree() -> void:
+	set_process(false)
 	HISTORY.manager = get_undo_redo()
 	profile_gizmo = PROFILE_GIZMO.new()
 	add_node_3d_gizmo_plugin(profile_gizmo)
@@ -35,12 +36,34 @@ func _enter_tree() -> void:
 		_run_editor_visual_tests.call_deferred()
 	if "--roda-prop-output-tests" in OS.get_cmdline_user_args():
 		_run_prop_output_tests.call_deferred()
+	if "--roda-prop-span-tests" in OS.get_cmdline_user_args() or "--roda-lane-appearance-tests" in OS.get_cmdline_user_args():
+		# Startup script indexing can cancel an awaiting GDScript test runner.
+		# Dispatch only after the consuming scene and filesystem are ready.
+		set_process(true)
 	if "--roda-terrain-startup-tests" in OS.get_cmdline_user_args():
 		_run_terrain_startup_tests.call_deferred()
 	if "--roda-topology-output-tests" in OS.get_cmdline_user_args():
 		_run_topology_output_tests.call_deferred()
 	if "--roda-incremental-workflow-tests" in OS.get_cmdline_user_args():
 		_run_incremental_workflow_tests.call_deferred()
+
+
+func _process(_delta: float) -> void:
+	if EditorInterface.get_resource_filesystem().is_scanning():
+		return
+	var scene := EditorInterface.get_edited_scene_root()
+	if scene == null:
+		return
+	if "--roda-lane-appearance-tests" in OS.get_cmdline_user_args():
+		if scene.get_node_or_null("Road/Route") == null:
+			return
+		set_process(false)
+		_run_lane_appearance_tests.call_deferred()
+		return
+	if scene.get_node_or_null("SplinePropArray3D") == null:
+		return
+	set_process(false)
+	_run_prop_span_tests.call_deferred()
 
 
 func _exit_tree() -> void:
@@ -102,6 +125,16 @@ func _run_editor_visual_tests() -> void:
 
 func _run_prop_output_tests() -> void:
 	var tests: RefCounted = load("res://tools/check_prop_output_editor.gd").new()
+	await tests.run(self)
+
+
+func _run_prop_span_tests() -> void:
+	var tests := preload("../tests/check_prop_span_editor.gd").new()
+	await tests.run(self)
+
+
+func _run_lane_appearance_tests() -> void:
+	var tests := preload("../tests/check_lane_appearance_editor.gd").new()
 	await tests.run(self)
 
 

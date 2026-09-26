@@ -23,6 +23,17 @@ to one; the revert arrows reset each field. Existing saved transforms are kept.
 It works with Item Scene, Item Mesh and MultiMesh; regenerate props after editing
 it when automatic regeneration is off.
 
+To control where placement starts and stops, expand **SplinePropArray3D >
+PropSpan** in the scene tree and move **StartHandle** / **EndHandle** along the
+path. The same distances are editable as **Start Offset** / **End Offset** on
+PropSpan. With **Only In Ranges > Span Nodes**, a full-length span is created
+automatically for a single explicit Source Path, including arrays beside the
+road, and for arrays directly under a Path3D. Assigning the source after adding
+the array also creates the handles. Existing authored spans are retained.
+For several source paths, add a SplinePropSpan3D child for each desired range
+and set its Target Path. Manual, combined and exclusion ranges keep their
+authored settings. These controls work for both independent and connected props.
+
 For a continuous fence or wall, enable **Placement > Fit Segments To Path**.
 Each module fits between two shared samples of the selected edge, so curves,
 varying road widths and grades do not leave the longitudinal gaps produced by

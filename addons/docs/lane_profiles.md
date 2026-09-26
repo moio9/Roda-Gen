@@ -25,6 +25,20 @@ The transition stored at point `i` controls the segment from point `i - 1` to po
 
 The default transition is a smooth ease-in/ease-out curve. Its domain and output are interpreted as normalized `0..1` values.
 
+## Lane appearance
+
+Use the path's **Road > Lane Appearance > Lane Appearance Overrides** to add a
+`RoadLaneAppearance` resource. Select the side and lane number (1 starts at the
+center), then optionally restrict it to a distance range. Each entry can change
+the inner/outer marking styles, transition hatching and asphalt material, and
+add optional transverse lines at the range boundaries. See
+[per-lane markings and stopping bays](road_markings.md#per-lane-appearance-and-stopping-bays)
+for inheritance and shared-separator rules.
+
+`addons/scenes/lane_appearance_demo.tscn` provides a configured example. Unlike
+lane geometry edits, appearance edits do not need **Apply Lane Changes** when
+the road's automatic editor regeneration is enabled.
+
 ## Compatibility
 
 Per-lane materials on the road are applied as banked overlay strips. With

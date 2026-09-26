@@ -5,6 +5,7 @@ extends RefCounted
 
 const NODE_NAME := "GeneratedRoadMarkings"
 const CUT := preload("./terrain_road_mesh_cut.gd")
+const APPEARANCE := preload("./road_lane_appearance.gd")
 const OFF := 0
 const SOLID := 1
 const DASHED := 2
@@ -18,6 +19,9 @@ const SETTINGS := [
 	"markings_center_color", "markings_line_color", "markings_hatch_color", "markings_material_override",
 ]
 var _settings: Dictionary = {}
+var _path_appearances: Dictionary = {}
+var _path_lengths: Dictionary = {}
+var _active_appearances: Array = []
 var last_stats: Dictionary = {}
 var _buckets: Array = []
 var _marking_cuts: Dictionary = {}
@@ -41,6 +45,15 @@ func configure(road: Node) -> void:
 	_settings.clear()
 	for property in SETTINGS:
 		_settings[property.trim_prefix("markings_")] = road.get(property)
+	_path_appearances.clear()
+	_path_lengths.clear()
+	var paths: Array = road._resolve_paths()
+	for index in range(paths.size()):
+		_path_lengths[index] = paths[index].curve.get_baked_length() if paths[index].curve != null else 0.0
+		if not paths[index].has_method("get_lane_appearance_overrides"):
+			continue
+		var rules: Array = APPEARANCE.paint_rules(paths[index].get_lane_appearance_overrides())
+		_path_appearances[index] = rules
 
 
 func signature(road: Node) -> String:
@@ -110,6 +123,7 @@ func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionar
 		geometry_settings.erase(field)
 	for path_id in range(path_rows.size()):
 		_active_path_id = path_id
+		_active_appearances = _path_appearances.get(path_id, [])
 		var rows: Array = path_rows[path_id]
 		_suppress_joining_centerline = _is_continuous_joining_lane(rows)
 		if not _incremental:
@@ -170,6 +184,7 @@ func build(vertices: PackedVector3Array, path_rows: Array, exclusions: Dictionar
 	_buckets.clear()
 	_marking_cuts = {}
 	_active_path_id = -1
+	_active_appearances = []
 	_suppress_joining_centerline = false
 	_final_asphalt = null
 	return mesh
@@ -215,7 +230,7 @@ func _block_input(vertices: PackedVector3Array, rows: Array, exclusions: Array, 
 			for triangle: Dictionary in cut.get("_triangles"):
 				geometry.append(triangle.points)
 			cuts.append(geometry)
-	return var_to_bytes([settings, exclusions, input, cuts, _asphalt_signature, _suppress_joining_centerline])
+	return var_to_bytes([settings, exclusions, input, cuts, _asphalt_signature, _suppress_joining_centerline, APPEARANCE.in_range(_active_appearances, rows[0].distance, rows[-1].distance), _path_lengths.get(_active_path_id, 0.0)])
 
 
 func _is_continuous_joining_lane(rows: Array) -> bool:
@@ -250,6 +265,7 @@ func _cache_vertex_limit() -> int:
 
 
 func _build_rows(vertices: PackedVector3Array, rows: Array, exclusions: Array) -> void:
+	var path_rules := _active_appearances
 	for i in range(rows.size() - 1):
 		var row0: Dictionary = rows[i]
 		var row1: Dictionary = rows[i + 1]
@@ -257,6 +273,7 @@ func _build_rows(vertices: PackedVector3Array, rows: Array, exclusions: Array) -
 			continue
 		var s0 := float(row0["distance"])
 		var s1 := float(row1["distance"])
+		_active_appearances = APPEARANCE.in_range(path_rules, s0, s1)
 		if s1 - s0 < 0.00001:
 			continue
 		var ext0: Vector2 = row0["lane_extents"]
@@ -269,44 +286,143 @@ func _build_rows(vertices: PackedVector3Array, rows: Array, exclusions: Array) -
 			"cut": _marking_cuts.get(Vector2i(_active_path_id, int(row0.get("row_idx", i))), null)}
 		var layout0: Dictionary = row0["marking_layout"]
 		var layout1: Dictionary = row1["marking_layout"]
-		var transition := bool(row0.get("lateral_transition", false)) or bool(row1.get("lateral_transition", false))
-		# The joining path contributes a lane, not another opposing-traffic
-		# centerline. Its interior join boundary is painted by the host edge.
-		var joining := transition
-		for row: Dictionary in [row0, row1]:
-			for side in ["lateral_left", "lateral_right"]:
-				for contact: Vector3 in row.get(side, []):
-					if contact.z < 0.5:
-						joining = true
-		# A one-way profile has no opposing center divider.
-		if not _suppress_joining_centerline and not joining and minf(ext0.x + ext1.x, ext0.y + ext1.y) > 0.001:
-			_line(context, Vector2(s0, 0), Vector2(s1, 0), int(_settings["center_style"]), 0)
-		for side in [-1, 1]:
-			var extent0 := ext0.x if side < 0 else ext0.y
-			var extent1 := ext1.x if side < 0 else ext1.y
-			var contact_key := "lateral_left" if side < 0 else "lateral_right"
-			var contacts: Array = row0.get(contact_key, [])
-			var next_contacts: Array = row1.get(contact_key, [])
-			var shared_edge := not contacts.is_empty() or not next_contacts.is_empty()
-			# A shared edge belongs to the joined asphalt, so it has no edge stripe.
-			# A partial contact must not leave a short lane stripe at the taper.
-			if maxf(extent0, extent1) <= 0.001:
+		if _active_appearances.is_empty():
+			_paint_interval(context, s0, s1, ext0, ext1, layout0, layout1, row0, row1)
+			continue
+		var offsets := APPEARANCE.intervals(_active_appearances, s0, s1)
+		var width0 := float(layout0.get("lane_width", 3.5))
+		var width1 := float(layout1.get("lane_width", width0))
+		# Split where a growing/shrinking lane becomes the outside lane too.
+		for side in [0, 1]:
+			for lane in range(1, 13):
+				var a := ext0[side] - lane * width0
+				var b := ext1[side] - lane * width1
+				if absf(b - a) > 0.000001:
+					var fraction := -a / (b - a)
+					if fraction > 0.0 and fraction < 1.0:
+						var distance := lerpf(s0, s1, fraction)
+						if not offsets.has(distance):
+							offsets.append(distance)
+		offsets.sort()
+		for part in range(offsets.size() - 1):
+			var a := float(offsets[part])
+			var b := float(offsets[part + 1])
+			if b - a < 0.000001:
 				continue
-			var inset := maxf(float(_settings["edge_inset"]), float(_settings["line_width"]) * 0.5)
-			if not shared_edge and not transition and not _edge_is_internal(context, side):
-				_line(context, Vector2(s0, side * maxf(0.0, extent0 - inset)), Vector2(s1, side * maxf(0.0, extent1 - inset)), int(_settings["edge_style"]), 1)
-			if not bool(layout0.get("enabled", false)):
-				continue
-			var width0 := maxf(0.01, float(layout0.get("lane_width", 3.5)))
-			var width1 := maxf(0.01, float(layout1.get("lane_width", width0)))
-			var lanes := ceili(maxf(extent0 / width0, extent1 / width1))
-			for lane in range(1, lanes):
-				# Clip separators to the painted interior, away from the edge stripe.
-				var interior := _side_polygon(s0, s1, side, 0.0, 0.0, maxf(0.0, extent0 - inset * 2.0), maxf(0.0, extent1 - inset * 2.0))
-				_line(context, Vector2(s0, side * lane * width0), Vector2(s1, side * lane * width1), int(_settings["lane_style"]), 1, interior)
-			if bool(_settings["hatching_enabled"]) and not row0.get("lateral_transition",false) and not row1.get("lateral_transition",false):
-				_hatching(context, s0, s1, side, extent0, extent1, width0, width1, layout0, layout1, inset)
+			var t0 := (a - s0) / (s1 - s0)
+			var t1 := (b - s0) / (s1 - s0)
+			var l0 := layout0.duplicate()
+			var l1 := layout1.duplicate()
+			l0.lane_width = lerpf(width0, width1, t0)
+			l1.lane_width = lerpf(width0, width1, t1)
+			_paint_interval(context, a, b, ext0.lerp(ext1, t0), ext0.lerp(ext1, t1), l0, l1, row0, row1)
+		_paint_stop_lines(context, s0, s1, ext0, ext1, width0, width1)
+	_active_appearances = path_rules
 
+
+func _paint_interval(context: Dictionary, s0: float, s1: float, ext0: Vector2, ext1: Vector2,
+		layout0: Dictionary, layout1: Dictionary, row0: Dictionary, row1: Dictionary) -> void:
+	var transition := bool(row0.get("lateral_transition", false)) or bool(row1.get("lateral_transition", false))
+	# The joining path contributes a lane, not another opposing-traffic
+	# centerline. Its interior join boundary is painted by the host edge.
+	var joining := transition
+	for row: Dictionary in [row0, row1]:
+		for side in ["lateral_left", "lateral_right"]:
+			for contact: Vector3 in row.get(side, []):
+				if contact.z < 0.5:
+					joining = true
+	# A one-way profile has no opposing center divider.
+	if not _suppress_joining_centerline and not joining and minf(ext0.x + ext1.x, ext0.y + ext1.y) > 0.001:
+		_line(context, Vector2(s0, 0), Vector2(s1, 0), _center_style((s0 + s1) * 0.5), 0)
+	for side in [-1, 1]:
+		var extent0 := ext0.x if side < 0 else ext0.y
+		var extent1 := ext1.x if side < 0 else ext1.y
+		var contact_key := "lateral_left" if side < 0 else "lateral_right"
+		var contacts: Array = row0.get(contact_key, [])
+		var next_contacts: Array = row1.get(contact_key, [])
+		var shared_edge := not contacts.is_empty() or not next_contacts.is_empty()
+		# A shared edge belongs to the joined asphalt, so it has no edge stripe.
+		# A partial contact must not leave a short lane stripe at the taper.
+		if maxf(extent0, extent1) <= 0.001:
+			continue
+		var inset := maxf(float(_settings["edge_inset"]), float(_settings["line_width"]) * 0.5)
+		if not shared_edge and not transition and not _edge_is_internal(context, side):
+			_line(context, Vector2(s0, side * maxf(0.0, extent0 - inset)), Vector2(s1, side * maxf(0.0, extent1 - inset)), _outer_style(side, (extent0 + extent1) * 0.5, (float(layout0.get("lane_width", 3.5)) + float(layout1.get("lane_width", 3.5))) * 0.5, (s0 + s1) * 0.5), 1)
+		if not bool(layout0.get("enabled", false)):
+			continue
+		var width0 := maxf(0.01, float(layout0.get("lane_width", 3.5)))
+		var width1 := maxf(0.01, float(layout1.get("lane_width", width0)))
+		var lanes := ceili(maxf(extent0 / width0, extent1 / width1))
+		for lane in range(1, lanes):
+			# Clip separators to the painted interior, away from the edge stripe.
+			var interior := _side_polygon(s0, s1, side, 0.0, 0.0, maxf(0.0, extent0 - inset * 2.0), maxf(0.0, extent1 - inset * 2.0))
+			_line(context, Vector2(s0, side * lane * width0), Vector2(s1, side * lane * width1), _separator_style(side, lane, (s0 + s1) * 0.5), 1, interior)
+		if _has_hatching() and not row0.get("lateral_transition",false) and not row1.get("lateral_transition",false):
+			_hatching(context, s0, s1, side, extent0, extent1, width0, width1, layout0, layout1, inset)
+
+
+func _center_style(distance: float) -> int:
+	var style := int(APPEARANCE.value_at(_active_appearances, -1, 1, distance, "inner_line_style", _settings.center_style))
+	return int(APPEARANCE.value_at(_active_appearances, 1, 1, distance, "inner_line_style", style))
+
+
+func _separator_style(side: int, boundary: int, distance: float) -> int:
+	var style := int(APPEARANCE.value_at(_active_appearances, side, boundary, distance, "outer_line_style", _settings.lane_style))
+	return int(APPEARANCE.value_at(_active_appearances, side, boundary + 1, distance, "inner_line_style", style))
+
+
+func _outer_style(side: int, extent: float, width: float, distance: float) -> int:
+	var lane := maxi(1, ceili((extent - 0.000001) / maxf(0.01, width)))
+	return int(APPEARANCE.value_at(_active_appearances, side, lane, distance, "outer_line_style", _settings.edge_style))
+
+
+func _has_hatching() -> bool:
+	if _settings.hatching_enabled:
+		return true
+	for rule: Dictionary in _active_appearances:
+		if rule.transition_hatching == 1:
+			return true
+	return false
+
+
+func _paint_stop_lines(context: Dictionary, s0: float, s1: float, ext0: Vector2, ext1: Vector2, width0: float, width1: float) -> void:
+	var lane_spans: Dictionary = {}
+	var inset := maxf(float(_settings.edge_inset), float(_settings.line_width) * 0.5)
+	for rule: Dictionary in _active_appearances:
+		var finish := minf(float(rule.end), float(_path_lengths.get(_active_path_id, INF)))
+		if finish <= rule.start:
+			continue
+		var spans: Array[Vector2] = []
+		if rule.stop_line_at_start:
+			spans.append(Vector2(rule.start, minf(finish, rule.start + rule.stop_line_width)))
+		if rule.stop_line_at_end and is_finite(finish):
+			spans.append(Vector2(maxf(rule.start, finish - rule.stop_line_width), finish))
+		var key := Vector2i(rule.side, rule.lane)
+		if not lane_spans.has(key):
+			lane_spans[key] = []
+		for span in spans:
+			var a := maxf(span.x, s0)
+			var b := minf(span.y, s1)
+			if b > a:
+				lane_spans[key].append(Vector2(a, b))
+	for key: Vector2i in lane_spans:
+		var spans: Array = lane_spans[key]
+		spans.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+		var merged: Array[Vector2] = []
+		for span: Vector2 in spans:
+			if not merged.is_empty() and span.x <= merged[-1].y:
+				merged[-1].y = maxf(merged[-1].y, span.y)
+			else:
+				merged.append(span)
+		var side := key.x
+		var lane := key.y
+		var extent0 := ext0.x if side < 0 else ext0.y
+		var extent1 := ext1.x if side < 0 else ext1.y
+		var polygon := _side_polygon(s0, s1, side, (lane - 1) * width0 + inset, (lane - 1) * width1 + inset,
+			maxf((lane - 1) * width0 + inset, minf(lane * width0, extent0) - inset),
+			maxf((lane - 1) * width1 + inset, minf(lane * width1, extent1) - inset))
+		for span in merged:
+			_emit(_clip_band(polygon, Vector2.RIGHT, span.x, span.y), context, 1)
 
 
 func _edge_is_internal(context: Dictionary, side: int) -> bool:
@@ -387,7 +503,17 @@ func _hatching(context: Dictionary, s0: float, s1: float, side: int, extent0: fl
 		low = minf(low, axis.dot(point))
 		high = maxf(high, axis.dot(point))
 	for index in range(floori(low / spacing), floori(high / spacing) + 1):
-		_emit(_clip_band(polygon, axis, index * spacing, index * spacing + band_width), context, 2)
+		var band := _clip_band(polygon, axis, index * spacing, index * spacing + band_width)
+		if _active_appearances.is_empty():
+			_emit(band, context, 2)
+			continue
+		for lane in range(1, ceili(maxf(extent0 / width0, extent1 / width1)) + 1):
+			var enabled_ := int(APPEARANCE.value_at(_active_appearances, side, lane, (s0 + s1) * 0.5,
+				"transition_hatching", int(bool(_settings.hatching_enabled))))
+			if enabled_ == 0:
+				continue
+			var lane_area := _side_polygon(s0, s1, side, (lane - 1) * width0, (lane - 1) * width1, lane * width0, lane * width1)
+			_emit(_clip_convex(band, lane_area), context, 2)
 
 
 func _side_polygon(s0: float, s1: float, side: int, inner0: float, inner1: float, outer0: float, outer1: float) -> PackedVector2Array:

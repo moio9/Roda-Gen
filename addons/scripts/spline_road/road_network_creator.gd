@@ -281,6 +281,7 @@ var _terrain_influence_builder := preload("./road_terrain_influence_builder.gd")
 var _runtime_output := preload("./road_runtime_output.gd").new()
 var _marking_builder := preload("./road_marking_builder.gd").new()
 var _lateral_join := preload("./road_lateral_join.gd").new()
+var _appearance_update := preload("./road_appearance_update.gd").new()
 var _lane_overlay_cache := preload("./road_lane_overlay_cache.gd").new()
 
 
@@ -418,6 +419,7 @@ func get_source_rebuild_stats() -> Dictionary:
 
 
 func clear_source_generation_cache() -> void:
+	_appearance_update.invalidate()
 	_path_sampler.clear_cache()
 	_mesh_builder.clear_incremental_cache()
 	_runtime_output.clear_partition_cache()
@@ -428,6 +430,10 @@ func clear_source_generation_cache() -> void:
 		_terrain_builder.request_incremental_cache_clear()
 	else:
 		_terrain_builder.clear_incremental_cache()
+
+
+func get_appearance_update_stats() -> Dictionary:
+	return _appearance_update.last_stats.duplicate()
 
 
 func get_marking_stats() -> Dictionary:
@@ -624,7 +630,6 @@ func _profile_log(label: String, start_usec: int, extra: String = "") -> void:
 
 
 func regenerate() -> void:
-	_output_ready = false
 	# A running job still owns the component snapshots if threading was just
 	# disabled in the Inspector. Cancel/join it before configuring a synchronous job.
 	if _is_generation_thread_active():
@@ -632,6 +637,10 @@ func regenerate() -> void:
 		_last_signature = _build_signature()
 		_debug_log("regenerate() deferred while threaded finalize is running.")
 		return
+	if _appearance_update.try_refresh(self):
+		return
+	_output_ready = false
+	_appearance_update.begin(self)
 	_debug_log("regenerate() start on " + str(get_path()))
 	var profile_total_start := _profile_start()
 	var profile_cleanup_start := _profile_start()
@@ -675,7 +684,14 @@ func regenerate() -> void:
 	var path_weld_allow_midpath: Array = sampled["path_weld_allow_midpath"]
 	var path_weld_strip_enabled: Array = sampled["path_weld_strip_enabled"]
 	var path_weld_strip_length: Array = sampled["path_weld_strip_length"]
-	_marking_rows = path_rows if markings_enabled else []
+	# Retain lane layouts even when paint is disabled, so enabling it needs no
+	# topology rebuild. Existing sampled layouts are reused when available.
+	for path_id in range(path_rows.size()):
+		for row: Dictionary in path_rows[path_id]:
+			if not row.has("marking_layout"):
+				row.marking_layout = paths[path_id].get_lane_layout_at_offset(row.distance) if paths[path_id].has_method("get_lane_layout_at_offset") else {"enabled": false}
+	_marking_rows = path_rows
+	_appearance_update.sampled(self)
 	_marking_exclusions = {}
 	_lateral_join.prepare(verts, path_rows)
 
@@ -1015,7 +1031,8 @@ func _finalize_generation_after_terrain_and_walls(
 	_profile_log("main assign mesh node", profile_assign_start)
 	_marking_builder.assign(self, verts, _marking_rows, _marking_exclusions,
 		_lateral_join.marking_cuts, lane_indices)
-	_last_signature = _build_signature()
+	_appearance_update.complete(self, verts, lane_indices)
+	_last_signature = _appearance_update.generation_signature
 	_output_ready = true
 	_preset_controller.refresh_barriers(self)
 
@@ -3399,6 +3416,9 @@ func _build_lane_material_overlay_mesh() -> ArrayMesh:
 
 
 func _append_final_lane_material_surfaces(mesh: ArrayMesh, paths: Array[Path3D], inv_global: Transform3D) -> void:
+	if preload("./road_lane_material_overrides.gd").has_overrides(paths):
+		preload("./road_lane_material_overrides.gd").new().append_surfaces(self, mesh, paths, inv_global)
+		return
 	var projector := preload("./road_lane_overlay_projector.gd").new()
 	projector.configure(_terrain_surface_data, global_transform)
 	var buckets: Array[Dictionary] = []
@@ -3428,24 +3448,30 @@ func _append_final_lane_material_surfaces(mesh: ArrayMesh, paths: Array[Path3D],
 					points.append(global_transform * vertices[index] - up * lane_material_overlay_lift)
 					texcoords.append(uvs[index])
 				for triangle: Dictionary in projector.project(points, texcoords, lane_material_overlay_lift):
-					var tri: PackedVector3Array = triangle.vertices
-					var local := PackedVector3Array([inv_global * tri[0], inv_global * tri[1], inv_global * tri[2]])
-					if (local[1] - local[0]).cross(local[2] - local[0]).length_squared() < 0.0000000001:
-						continue
-					var corners := [0, 1, 2]
-					if ((tri[1] - tri[0]).cross(tri[2] - tri[0]).dot(triangle.normal) > 0.0) == invert_faces:
-						corners = [0, 2, 1]
-					for corner in corners:
-						bucket.indices.append(bucket.vertices.size())
-						bucket.vertices.append(local[corner])
-						bucket.normals.append((global_basis.transposed() * triangle.normal).normalized())
-						bucket.uvs.append(triangle.uvs[corner])
+					_append_projected_lane_triangle(bucket, triangle, inv_global)
 	for bucket in buckets:
 		_lane_overlay_cache.mesh_builder._add_surface(mesh, bucket.vertices, bucket.normals,
 			bucket.uvs, bucket.indices, bucket.material, true)
 
 
+func _append_projected_lane_triangle(bucket: Dictionary, triangle: Dictionary, inv_global: Transform3D) -> void:
+	var tri: PackedVector3Array = triangle.vertices
+	var local := PackedVector3Array([inv_global * tri[0], inv_global * tri[1], inv_global * tri[2]])
+	if (local[1] - local[0]).cross(local[2] - local[0]).length_squared() < 0.0000000001:
+		return
+	var corners := [0, 1, 2]
+	if ((tri[1] - tri[0]).cross(tri[2] - tri[0]).dot(triangle.normal) > 0.0) == invert_faces:
+		corners = [0, 2, 1]
+	for corner in corners:
+		bucket.indices.append(bucket.vertices.size())
+		bucket.vertices.append(local[corner])
+		bucket.normals.append((global_basis.transposed() * triangle.normal).normalized())
+		bucket.uvs.append(triangle.uvs[corner])
+
+
 func _has_lane_material_overrides() -> bool:
+	if preload("./road_lane_material_overrides.gd").has_overrides(_resolve_paths()):
+		return true
 	for material in left_lane_material_overrides:
 		if material != null:
 			return true
@@ -3500,10 +3526,7 @@ func _append_lane_material_path_strip(
 	var length := curve.get_baked_length()
 	if length <= 0.001:
 		return
-	var generation_step := sample_step
-	if path.has_method("get_road_generation_sample_step"):
-		generation_step = maxf(0.01, float(path.call("get_road_generation_sample_step", sample_step)))
-	var distances := _build_open_distances_with_step(length, generation_step)
+	var distances := _lane_material_sample_distances(path)
 	if distances.size() < 2:
 		return
 	var data := _lane_overlay_cache.rows(path, inv_global, left_side, lane_index, distances, length)
@@ -3516,6 +3539,13 @@ func _append_lane_material_path_strip(
 			continue
 		var index := base + row_index * 2
 		_append_quad_indices(indices, index, index + 1, index + 2, index + 3)
+
+
+func _lane_material_sample_distances(path: Path3D) -> PackedFloat32Array:
+	var generation_step := sample_step
+	if path.has_method("get_road_generation_sample_step"):
+		generation_step = maxf(0.01, float(path.call("get_road_generation_sample_step", sample_step)))
+	return _build_open_distances_with_step(path.curve.get_baked_length(), generation_step)
 
 
 func _build_lane_material_rows_native(path: Path3D, inv_global: Transform3D,
@@ -3651,7 +3681,11 @@ func _clear_terrain_influence_debug_node() -> void:
 
 
 func _build_signature() -> String:
-	var parts: Array[String] = []
+	return _build_geometry_signature() + "|" + _appearance_update.signature(self)
+
+
+func _build_geometry_signature() -> String:
+	var parts: Array[String] = [str(global_transform), str(uv_length_scale)]
 	parts.append(str([lateral_join_max_gap, lateral_join_max_overlap,
 		lateral_join_height_tolerance, lateral_join_height_blend_width, lateral_join_max_angle_degrees,
 		lateral_join_transition_length, lateral_join_transition_subdivisions]))
@@ -3660,7 +3694,8 @@ func _build_signature() -> String:
 			parts.append(str([lateral_join_transition_profile.get_point_position(i),
 				lateral_join_transition_profile.get_point_left_tangent(i),
 				lateral_join_transition_profile.get_point_right_tangent(i)]))
-	parts.append(_marking_builder.signature(self))
+	# Junction clearance also controls lateral weld exclusion regions and barriers.
+	parts.append(str(markings_junction_clearance))
 	parts.append(str(output_mode))
 	parts.append(str(output_chunk_size))
 	parts.append(str(output_generate_collision))
@@ -3681,9 +3716,6 @@ func _build_signature() -> String:
 	parts.append(str(shoulder_material_override))
 	parts.append(str(sidewalk_material_override))
 	parts.append(str(terrain_material_override))
-	parts.append(str(left_lane_material_overrides))
-	parts.append(str(right_lane_material_overrides))
-	parts.append(str(lane_material_overlay_lift))
 	parts.append(str(terrain_fill_algorithm))
 	parts.append(str(terrain_fill_topology))
 	parts.append(str(terrain_fill_base_height))
@@ -3751,6 +3783,7 @@ func _build_signature() -> String:
 	var paths := _resolve_paths()
 	parts.append(str(paths.size()))
 	for p in paths:
+		parts.append(str(p.get_instance_id()))
 		parts.append(str(p.global_transform))
 		if p.has_method("get_lateral_join_group"):
 			parts.append(p.get_lateral_join_group())

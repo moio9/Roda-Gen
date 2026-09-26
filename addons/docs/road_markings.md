@@ -12,6 +12,11 @@ Retention is bounded to 4,096 blocks and an estimated 32 MiB payload, with nativ
 reconstruction on capacity bypass. Disabling markings/incremental generation or
 clearing the road source cache releases retained geometry.
 
+Lane appearance rules invalidate only the paint blocks intersecting their
+distance ranges. Moving or deleting a range also invalidates its old blocks.
+Unrelated paths and blocks retain their paint. Rule-free rows use the native
+construction path, including after the last local override is removed.
+
 `tools/check_road_marking_cache.gd` compares actual surface arrays, order and
 materials against the native row builder, including boundary edits and cache
 lifecycle. The integrated editor workflow also checks local paint reuse,
@@ -20,6 +25,93 @@ Undo/Redo and exact full-reference rendering.
 Open `addons/scenes/road_markings_demo.tscn` for a runnable example with banking,
 a right-hand lane entering and leaving, eased transitions, double yellow center
 lines, dashed lane separators, solid edge lines and white hatching.
+
+For a stopping bay with its own surface material and optional transverse lines,
+open `addons/scenes/lane_appearance_demo.tscn`.
+
+## Per-lane appearance and stopping bays
+
+On the **SplinePathProfile3D**, open **Road > Lane Appearance > Lane Appearance
+Overrides**, add an array element, and create a **RoadLaneAppearance** resource.
+Enable the path's **Lane Profile Enabled** to identify individual lanes in a
+multi-lane road. These settings paint existing lanes; they do not add road width.
+
+- **Side** selects left/right in the source spline's authored direction.
+  **Lane** counts from the center outward, starting at **1**. A typical added
+  bay on a one-lane side is lane **2**. This resource uses lane numbers; the
+  network's material arrays still use zero-based array indices.
+- **Start Offset / End Offset** limit the rule in metres along that path.
+  End **0** means the path's end. Both default to 0 for the whole path; the
+  selected lane is painted only where it actually exists. Bounds can fall
+  between road samples. Disable **Enabled** to temporarily bypass a rule.
+- **Inner Line Style / Outer Line Style** select Inherit, Off, Solid, Dashed,
+  Double Solid or Double Dashed. Inner faces the road center; Outer controls
+  the next separator or, when this is the outermost lane, the road edge.
+  **Inherit** retains the normal network style. Dash length, phase, width,
+  colors and paint material continue to use the network's marking settings.
+- **Transition Hatching** can inherit, disable or enable diagonal paint on
+  this lane's entry/exit tapers. It does not fill the entire lane with hatching.
+- **Stop Line At Start / End** independently add a transverse stripe inside
+  the selected interval and lane. **Stop Line Width** is its length along the
+  spline. Put these bounds where the bay has reached the desired width; no
+  stripe appears where the selected lane has zero width. The line uses the
+  network's lane/edge paint color or material. This does not add STOP lettering.
+- **Surface Material** optionally replaces the asphalt appearance on just this
+  lane and interval. Empty inherits the road's per-lane/default material.
+
+For example, select Right / Lane 2, choose Dashed inside and Solid outside,
+disable transition hatching, and assign a different asphalt material. Add a
+second resource on the same lane with Start 22 / End 62 and the stop-line
+checkboxes enabled to draw transverse lines across the full-width bay.
+
+Overlapping resources are resolved from last to first **per explicit style or
+material**; Inherit/empty preserves earlier settings. A shared separator is
+drawn once: the outer lane's Inner setting takes precedence over its neighbour's
+Outer setting. For the central divider, right lane 1's Inner setting takes
+precedence over left lane 1's Inner setting. One-way/junction suppression still
+applies. Stop-line requests are combined; overlapping bars on the same lane are
+merged rather than stacked.
+
+**Road Markings > Enabled** on the network is still required for paint.
+Appearance edits follow its automatic regeneration setting and do not require
+**Apply Lane Changes**; that button applies lane geometry edits. If automatic
+regeneration is disabled, regenerate the road explicitly. Rules are local to
+their source path and are included in both runtime bake modes. An empty array
+preserves existing road appearance.
+
+### Editing ranges in the viewport
+
+With **Show Lane Appearance Handles** enabled on the path, each appearance
+resource gets a selectable range under `__LaneAppearanceHandles`. Select its
+cyan **StartHandle** or orange **EndHandle** and move it along the lane. Selecting
+the path, the range, a handle or the resource in the Inspector highlights the
+affected lane interval. The handle Inspector also exposes **Offset** in metres.
+
+The resource remains the authoritative storage. Numeric edits reposition the
+handles, native transform Undo/Redo restores the same resource after selection
+changes, and moving End to the source end restores the `End Offset = 0`
+convention. Handles are editor helpers and are removed at runtime. Disable
+**Show Lane Appearance Handles** to hide them without disabling the appearance.
+
+### Appearance-only regeneration
+
+Changing paint styles, colors, ranges or per-lane materials on a completed road
+reuses its final asphalt triangles, lane rows and junction cuts. The main road
+mesh, collision and final-road surface revision stay unchanged, so dependent
+terrain and fences are not invalidated by these edits. Material-only rules do
+not rebuild paint; paint-only edits do not rebuild the lane material overlays.
+This also supports enabling/disabling markings on an already generated road.
+
+Geometry, output configuration and junction-clearance changes still rebuild
+the road. Junction clearance participates in lateral joining and preset barrier
+exclusions. A pending worker must be cancelled/joined before the newest state
+is generated. Explicit unchanged **Regenerate**, or clearing the source cache,
+still permits a full rebuild. `get_appearance_update_stats()` reports which
+route was used and the time spent on an appearance update.
+
+Local material overlays sample only lanes with an assigned material and the
+source segments intersecting their intervals. Original bracketing samples are
+retained so clipping, UVs, bank and first-source ownership remain consistent.
 
 ## Controls
 
@@ -65,13 +157,17 @@ uses the captured road rows before assigning the finished paint.
 
 **Bake Runtime Scene** includes the paint in both Single Mesh and Spatial Chunks
 modes. Paint itself remains a separate mesh rather than being split into spatial
-chunks. Source-level incremental rebuilding and per-chunk paint reuse are not
-implemented yet.
+chunks. Incremental reuse happens in source-row blocks; the combined paint mesh
+is still uploaded as one output.
 
 ## Validation
 
 ```sh
 godot --headless --path . --script tools/check_road_markings.gd
+godot --headless --path . --script addons/tests/check_lane_appearance.gd
+godot --headless --path . --script addons/tests/check_appearance_optimization.gd
+godot --path . --rendering-method forward_plus --resolution 960x720 --script addons/tests/render_lane_appearance.gd
+godot --editor --path . addons/scenes/lane_appearance_demo.tscn -- --roda-lane-appearance-tests
 godot --path . --rendering-method forward_plus --resolution 960x720 --script tools/render_road_markings.gd
 ```
 
@@ -82,6 +178,14 @@ generation, disabling, unchanged road geometry and both bake modes.
 The worker test also disables threading while a job is pending, changes paint
 settings, and checks that the old snapshot is joined/discarded before the new
 synchronous generation is configured.
+
+The lane-appearance check covers exact sub-row bounds, dash phase, shared-line
+precedence, overlapping stop bars, path isolation, material ranges with zero
+texture scale, worker snapshots, hatching overrides, serialization and chunked
+baking. The editor check edits the native Inspector control and verifies automatic
+regeneration, Undo/Redo and idle stability. The Forward+ check compares restored
+and baked output against the original; the stopping-bay example had zero changed
+pixels in both comparisons.
 
 The demonstration's measured maximum triangle-conformity error was about
 0.016 mm. The rendered entry/exit views contain visible center and lane/hatch

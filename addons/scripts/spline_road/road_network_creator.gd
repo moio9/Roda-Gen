@@ -3389,10 +3389,60 @@ func _build_lane_material_overlay_mesh() -> ArrayMesh:
 		return null
 	var mesh := ArrayMesh.new()
 	var inv_global := global_transform.affine_inverse()
-	_append_lane_material_side_surfaces(mesh, paths, inv_global, true, left_lane_material_overrides)
-	_append_lane_material_side_surfaces(mesh, paths, inv_global, false, right_lane_material_overrides)
+	if _terrain_surface_data.has("lane_indices"):
+		_append_final_lane_material_surfaces(mesh, paths, inv_global)
+	else:
+		_append_lane_material_side_surfaces(mesh, paths, inv_global, true, left_lane_material_overrides)
+		_append_lane_material_side_surfaces(mesh, paths, inv_global, false, right_lane_material_overrides)
 	_lane_overlay_cache.finish()
 	return mesh
+
+
+func _append_final_lane_material_surfaces(mesh: ArrayMesh, paths: Array[Path3D], inv_global: Transform3D) -> void:
+	var projector := preload("./road_lane_overlay_projector.gd").new()
+	projector.configure(_terrain_surface_data, global_transform)
+	var buckets: Array[Dictionary] = []
+	for left_side in [true, false]:
+		var materials := left_lane_material_overrides if left_side else right_lane_material_overrides
+		for lane in range(materials.size()):
+			if materials[lane] != null:
+				buckets.append({"left": left_side, "lane": lane, "material": materials[lane],
+					"vertices": PackedVector3Array(), "normals": PackedVector3Array(),
+					"uvs": PackedVector2Array(), "indices": PackedInt32Array()})
+	# Source order owns overlaps, independent of material/side grouping.
+	for path in paths:
+		if path == null or path.curve == null or path.curve.point_count < 2 or _path_is_terrain_influence_only(path):
+			continue
+		for bucket in buckets:
+			var vertices := PackedVector3Array()
+			var normals := PackedVector3Array()
+			var uvs := PackedVector2Array()
+			var indices := PackedInt32Array()
+			_append_lane_material_path_strip(vertices, normals, uvs, indices, path, inv_global, bucket.left, bucket.lane)
+			for i in range(0, indices.size(), 3):
+				var points := PackedVector3Array()
+				var texcoords := PackedVector2Array()
+				for corner in range(3):
+					var index := indices[i + corner]
+					var up := (global_basis * normals[index]).normalized()
+					points.append(global_transform * vertices[index] - up * lane_material_overlay_lift)
+					texcoords.append(uvs[index])
+				for triangle: Dictionary in projector.project(points, texcoords, lane_material_overlay_lift):
+					var tri: PackedVector3Array = triangle.vertices
+					var local := PackedVector3Array([inv_global * tri[0], inv_global * tri[1], inv_global * tri[2]])
+					if (local[1] - local[0]).cross(local[2] - local[0]).length_squared() < 0.0000000001:
+						continue
+					var corners := [0, 1, 2]
+					if ((tri[1] - tri[0]).cross(tri[2] - tri[0]).dot(triangle.normal) > 0.0) == invert_faces:
+						corners = [0, 2, 1]
+					for corner in corners:
+						bucket.indices.append(bucket.vertices.size())
+						bucket.vertices.append(local[corner])
+						bucket.normals.append((global_basis.transposed() * triangle.normal).normalized())
+						bucket.uvs.append(triangle.uvs[corner])
+	for bucket in buckets:
+		_lane_overlay_cache.mesh_builder._add_surface(mesh, bucket.vertices, bucket.normals,
+			bucket.uvs, bucket.indices, bucket.material, true)
 
 
 func _has_lane_material_overrides() -> bool:

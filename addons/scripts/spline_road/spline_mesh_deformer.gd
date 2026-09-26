@@ -53,6 +53,9 @@ class_name SplineMeshDeformer3D
 @export var add_sidewalk_height_at_edges := true
 ## Uses RoadNetworkCreator3D's exact frame when one is available.
 @export var follow_road_surface := true
+## Follow the final welded outline, accounting for this mesh's thickness.
+## Requires Follow Road Surface and Edge Uses Total Road Width; center placement is unchanged.
+@export var follow_generated_road_edge := true
 
 @export_group("Deformation")
 ## Pick the source mesh axis that represents its length. Local +X is the common
@@ -107,6 +110,7 @@ const HANDLE_SYNC_EPSILON := 0.001
 
 var _last_signature := ""
 var _last_lane_layout_signature := ""
+var _last_dependent_width_signature := ""
 var _pending_signature := ""
 var _pending_time_left := 0.0
 var _last_generated_vertex_count := 0
@@ -116,6 +120,9 @@ var _last_handle_source_signature := ""
 var _last_start_handle_position := Vector3(INF, INF, INF)
 var _last_end_handle_position := Vector3(INF, INF, INF)
 var _syncing_span_handles := false
+var _road_edge := preload("./prop_road_edge_query.gd").new()
+var _source_lateral_bounds := Vector2.ZERO
+var _source_min_y := 0.0
 
 
 func _ready() -> void:
@@ -130,6 +137,11 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if not Engine.is_editor_hint():
+		var path := _get_source_path()
+		if source_mesh != null and path != null and path.curve != null and path.curve.point_count >= 2 \
+				and _uses_final_edge() and not _lane_edge_update_deferred(path) \
+				and _road_edge.changed(_resolve_road_network(path) as Node3D):
+			regenerate()
 		return
 	_sync_span_handles()
 	if not generate_in_editor or not auto_regenerate_in_editor:
@@ -175,6 +187,8 @@ func regenerate() -> void:
 		return
 	var path := _get_source_path()
 	_last_lane_layout_signature = _source_lane_layout_signature(path)
+	_last_dependent_width_signature = str(path.get_dependent_width_profile_signature()) \
+		if path != null and path.has_method("get_dependent_width_profile_signature") else ""
 	if path == null:
 		_debug_log("Set source_path, place this node under a Path3D, or beside a Path3D under RoadNetworkCreator3D.")
 		_clear_generated()
@@ -190,6 +204,7 @@ func regenerate() -> void:
 		_clear_generated()
 		_last_signature = _build_signature()
 		return
+	_road_edge.configure(_resolve_road_network(path) as Node3D if _uses_final_edge() else null)
 
 	var bounds := _get_source_longitudinal_bounds()
 	var source_length := bounds.y - bounds.x
@@ -276,6 +291,16 @@ func _source_lane_layout_signature(path: Path3D) -> String:
 	if path != null and path.has_method("_build_live_lane_signature") and path.get("lane_profile_enabled"):
 		return str(path.call("_build_live_lane_signature"))
 	return ""
+
+
+func _lane_edge_update_deferred(path: Path3D) -> bool:
+	if path == null or not path.has_method("get_dependent_width_profile_signature") \
+			or not path.get("lane_profile_enabled") or path.get("live_lane_regeneration"):
+		return false
+	# Raw PackedArray edits can precede the profile's editor polling. Compare the
+	# live layout and applied revision so runtime and immediate bake agree too.
+	return _last_lane_layout_signature != _source_lane_layout_signature(path) \
+		and _last_dependent_width_signature == str(path.get_dependent_width_profile_signature())
 
 
 func _build_deformed_mesh(
@@ -428,13 +453,17 @@ func _deform_surface(
 				var deformed_positions: Array[Vector3] = []
 				var deformed_normals: Array[Vector3] = []
 				var deformed_tangent_vectors: Array[Vector3] = []
+				var first_distance := INF
+				var last_distance := -INF
 				for vertex_data in split_triangle:
 					var source_position: Vector3 = vertex_data.get("position", Vector3.ZERO)
 					var q := _axis_coordinate(source_position)
 					var distance := begin + float(repeat_index) * source_length * distance_scale
 					distance += (q - bounds.x) * distance_scale
 					distance = clampf(distance, begin, end)
-					var frame := _sample_frame_cached(path, distance, frame_cache)
+					first_distance = minf(first_distance, distance)
+					last_distance = maxf(last_distance, distance)
+					var frame := _sample_frame_cached(path, distance, frame_cache, side)
 					deformed_positions.append(_deform_position(source_position, path, distance, side, frame))
 					if has_normals:
 						var source_normal: Vector3 = vertex_data.get("normal", Vector3.UP)
@@ -446,6 +475,8 @@ func _deform_surface(
 						)
 
 				if deformed_positions.size() != 3:
+					continue
+				if not _edge_span_clear(path, first_distance, last_distance, side, frame_cache):
 					continue
 				var face_cross := (
 					(deformed_positions[1] - deformed_positions[0])
@@ -681,9 +712,9 @@ func _deform_position(
 	var vertical_axis: Vector3 = frame.get("vertical", up)
 	var lateral := _axis_lateral_coordinate(source_position) * lateral_scale
 	var height := source_position.y * height_scale
-	var side_offset := _compute_side_offset(path, distance, side)
+	var side_offset := 0.0 if frame.get("final_edge", false) else _compute_side_offset(path, distance, side)
 	side_offset += lateral_offset + float(side) * outward_offset
-	var sidewalk_raise := _compute_sidewalk_raise(path, distance, side)
+	var sidewalk_raise := 0.0 if frame.get("final_edge", false) else _compute_sidewalk_raise(path, distance, side)
 	var world_position := center
 	world_position += right * (side_offset + lateral)
 	world_position += vertical_axis * sidewalk_raise
@@ -725,13 +756,74 @@ func _deform_normal(
 	return local_normal.normalized()
 
 
-func _sample_frame_cached(path: Path3D, distance: float, cache: Dictionary) -> Dictionary:
-	var key := str(snappedf(distance, 0.00001))
+func _sample_frame_cached(path: Path3D, distance: float, cache: Dictionary, side := 0) -> Dictionary:
+	var key := "frame:%d:%s" % [side, snappedf(distance, 0.00001)]
+	if cache.has(key):
+		return cache[key]
+	var frame := _edge_frame_origin(path, distance, side, cache).duplicate()
+	if frame.get("final_edge", false):
+		var probe := maxf(0.01, tangent_sample_distance)
+		var before := _edge_frame_origin(path, maxf(0.0, distance - probe), side, cache)
+		var after := _edge_frame_origin(path, minf(path.curve.get_baked_length(), distance + probe), side, cache)
+		var tangent: Vector3 = after.center - before.center
+		if tangent.length_squared() > EPS * EPS:
+			tangent = tangent.normalized()
+			var right := (frame.up as Vector3).cross(tangent).normalized()
+			if right.length_squared() > EPS:
+				frame.tangent = tangent
+				frame.right = right
+				frame.up = tangent.cross(right).normalized()
+	cache[key] = frame
+	return frame
+
+
+func _uses_final_edge() -> bool:
+	return follow_generated_road_edge and follow_road_surface and edge_uses_total_road_width and placement_mode != PLACEMENT_CENTER
+
+
+func _edge_frame_origin(path: Path3D, distance: float, side: int, cache: Dictionary) -> Dictionary:
+	var key := "origin:%d:%s" % [side, snappedf(distance, 0.00001)]
 	if cache.has(key):
 		return cache[key]
 	var frame := _sample_frame(path, distance)
+	if side != 0 and _uses_final_edge() and _road_edge.active():
+		var edge: Dictionary = _road_edge.edge_at(frame.center, frame.right * float(side))
+		if not edge.is_empty():
+			var right: Vector3 = frame.right
+			var up: Vector3 = edge.up
+			if up.y > EPS:
+				right.y = -(up.x * right.x + up.z * right.z) / up.y
+			right = right.normalized()
+			var clearance := maxf(0.0, _source_lateral_bounds.y if side < 0 else -_source_lateral_bounds.x)
+			frame.center = edge.position + right * float(side) * clearance
+			frame.right = right
+			frame.up = up
+			frame.tangent = right.cross(up).normalized()
+			frame.vertical = up
+			frame.final_edge = true
 	cache[key] = frame
 	return frame
+
+
+func _edge_span_clear(path: Path3D, begin: float, end: float, side: int, cache: Dictionary) -> bool:
+	if side == 0 or not _uses_final_edge() or not _road_edge.active() or end - begin < EPS:
+		return true
+	var key := "clear:%d:%s:%s" % [side, snappedf(begin, 0.00001), snappedf(end, 0.00001)]
+	if cache.has(key):
+		return cache[key]
+	var a := _sample_frame_cached(path, begin, cache, side)
+	var b := _sample_frame_cached(path, end, cache, side)
+	if not a.get("final_edge", false) or not b.get("final_edge", false):
+		return true
+	var corners := PackedVector3Array()
+	for pair in [[a, _source_lateral_bounds.x], [a, _source_lateral_bounds.y],
+			[b, _source_lateral_bounds.y], [b, _source_lateral_bounds.x]]:
+		var frame: Dictionary = pair[0]
+		corners.append(frame.center + frame.right * (float(pair[1]) + lateral_offset + float(side) * outward_offset)
+			+ frame.up * (_source_min_y * height_scale + vertical_offset))
+	var clear := not _road_edge.overlaps_footprint(corners)
+	cache[key] = clear
+	return clear
 
 
 func _sample_frame(path: Path3D, distance: float) -> Dictionary:
@@ -874,6 +966,8 @@ func _axis_lateral_component(value: Vector3) -> float:
 func _get_source_longitudinal_bounds() -> Vector2:
 	var minimum := INF
 	var maximum := -INF
+	_source_lateral_bounds = Vector2(INF, -INF)
+	_source_min_y = INF
 	for surface_index in range(source_mesh.get_surface_count()):
 		var arrays := source_mesh.surface_get_arrays(surface_index)
 		var vertices: PackedVector3Array = (
@@ -885,6 +979,10 @@ func _get_source_longitudinal_bounds() -> Vector2:
 			var q := _axis_coordinate(vertex)
 			minimum = minf(minimum, q)
 			maximum = maxf(maximum, q)
+			var lateral := _axis_lateral_coordinate(vertex) * lateral_scale
+			_source_lateral_bounds.x = minf(_source_lateral_bounds.x, lateral)
+			_source_lateral_bounds.y = maxf(_source_lateral_bounds.y, lateral)
+			_source_min_y = minf(_source_min_y, vertex.y)
 	if not is_finite(minimum) or not is_finite(maximum):
 		return Vector2.ZERO
 	return Vector2(minimum, maximum)
@@ -1282,6 +1380,7 @@ func _build_signature() -> String:
 		str(fit_repeats_to_span), str(placement_mode), str(fallback_road_width),
 		str(edge_uses_total_road_width), str(lateral_offset), str(outward_offset),
 		str(vertical_offset), str(add_sidewalk_height_at_edges), str(follow_road_surface),
+		str(follow_generated_road_edge),
 		str(deform_axis), str(curve_subdivision_step), str(auto_subdivide_mesh),
 		str(tangent_sample_distance), str(align_with_curve_up), str(lateral_scale),
 		str(height_scale), str(material_override), str(cast_shadow), str(generate_collision),
@@ -1313,6 +1412,10 @@ func _build_signature() -> String:
 		var road_network := _resolve_road_network(path)
 		if road_network != null:
 			parts.append(str(road_network.get_instance_id()))
+			if _uses_final_edge() and road_network.has_method("get_terrain_surface_revision"):
+				# Preserve deferred lane editing until Rebuild Lane Dependents is applied.
+				var defer_lanes := _lane_edge_update_deferred(path)
+				parts.append(str(_road_edge._revision if defer_lanes else road_network.get_terrain_surface_revision()))
 			if road_network is Node3D:
 				parts.append(str((road_network as Node3D).global_transform))
 			for property_name in [

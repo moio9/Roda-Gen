@@ -51,6 +51,11 @@ It connects rigid modules; it does not bend or weld their geometry, so thick
 modules can still show corner seams at sharp turns. Decorative overhangs count
 towards the measured length.
 
+Independent props aligned to the path use local `-Z` as forward and a proper
+rotation basis; alignment no longer reflects the model. An intentional mirror
+can still be authored through the custom scale. Existing assets that compensated
+for the old reflection may need their custom rotation/scale adjusted.
+
 Connected segments always align to their endpoints, ignore randomization and
 bypass incremental placement/output reuse. Item Mesh supports either rendering
 mode; Item Scene keeps individual nodes. Ordinary independent props retain their

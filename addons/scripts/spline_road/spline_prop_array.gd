@@ -672,12 +672,14 @@ func _build_spawn_basis(
 
 	var basis := Basis.IDENTITY
 	if align_with_path:
-		var right := u.cross(t).normalized()
+		# Local -Z follows the path. X must complete a right-handed basis;
+		# using the road's lateral direction here reflected every aligned model.
+		var right := t.cross(u).normalized()
 		if right.length() < 0.001:
-			right = Vector3.UP.cross(t).normalized()
+			right = t.cross(Vector3.UP).normalized()
 		if right.length() < 0.001:
-			right = Vector3.RIGHT
-		u = t.cross(right).normalized()
+			right = t.cross(Vector3.RIGHT if absf(t.x) < 0.9 else Vector3.FORWARD).normalized()
+		u = right.cross(t).normalized()
 		if u.length() < 0.001:
 			u = Vector3.UP
 		basis = Basis(right, u, -t).orthonormalized()

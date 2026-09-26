@@ -55,6 +55,18 @@ When the path belongs to `RoadNetworkCreator3D`, the deformer discovers it autom
 
 Set `Road Network Source` explicitly only if automatic ancestor discovery cannot find the intended road generator.
 
+`Follow Generated Road Edge` is enabled by default for edge placement with
+`Follow Road Surface` and `Edge Uses Total Road Width`. It samples the final welded
+road outline, including lateral joins, and uses the resulting height and bank.
+The mesh's lateral thickness is kept outside that outline before adding the
+authored offsets. Road rebuilds update the deformer in the editor and at runtime.
+Small bend slices that would cut across a side-junction opening are omitted;
+their collision is omitted with them. Span handles remain on the source path.
+
+Disable this option for the original placement centered on the authored edge.
+Center placement and lane-only placement retain their existing behavior. Without
+a generated road surface, the deformer falls back to the source path frame.
+
 ## Collision and saving
 
 - `Generate Collision` creates trimesh collision for every generated side.
@@ -64,3 +76,15 @@ Set `Road Network Source` explicitly only if automatic ancestor discovery cannot
 The source mesh origin is preserved across its cross-section. If a centered wall is half underground, raise `Vertical Offset` by half its source height.
 
 A ready-to-open example is available at `res://addons/scenes/spline_mesh_deformer_demo.tscn`.
+
+## Regression checks
+
+```sh
+godot --headless --path . --script addons/tests/check_deformer_final_road_edge.gd
+godot --headless --path . --script tools/check_span_handle_compatibility.gd
+godot --headless --path . --script tools/check_road_presets.gd
+```
+
+The final-edge check covers banked lateral joins, mesh thickness, both sides,
+transformed outputs, collision parity, road edits, junction openings and explicit
+fallback modes. Preset checks also protect deferred lane editing and bake validity.

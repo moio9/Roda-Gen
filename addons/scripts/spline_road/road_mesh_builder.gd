@@ -238,7 +238,10 @@ func _build_mesh(
 		false
 	)
 	_profile_log("build mesh surface outer walls", profile_surface_start, "indices=%s" % [wall_indices.size()])
-	mesh.set_meta("_roda_terrain_surface", {"vertices": verts, "indices": lane_indices + shoulder_indices + sidewalk_indices})
+	mesh.set_meta("_roda_terrain_surface", {
+		"vertices": verts, "indices": lane_indices + shoulder_indices + sidewalk_indices,
+		"lane_indices": lane_indices,
+	})
 	return mesh
 
 

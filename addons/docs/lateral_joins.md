@@ -106,14 +106,23 @@ small allowed vertical difference is connected between the actual edge heights.
 Height matching needs an initial facing-edge contact within the configured height
 tolerance; stacked roads do not join merely because their XZ footprints overlap.
 
-Separately generated props, guardrails and per-lane material overlays still follow
-their original source paths. Use their authored spans/ranges to exclude the shared
-interior, and the shared asphalt material for overlapping lane geometry. These
-independent generators are not rewritten by a lateral join.
+Connected `SplinePropArray3D` segments and edge-placed `SplineMeshDeformer3D`
+outputs follow the final outline with `Follow Generated Road Edge` enabled.
+Their thickness is placed outside the road and pieces crossing a junction opening
+are omitted. Independent props still use their authored source paths and ranges.
+
+Per-lane material strips are clipped to the final asphalt and projected onto its
+height and bank. Source order owns overlapping strips; later paths cannot add a
+second overlay on the same final triangle. Shoulders and sidewalks are excluded,
+and elevated decks retain separate coverage. UVs keep the authored lane mapping.
+New intersection/transition pavement outside all authored lane strips retains
+the shared asphalt material. Projection accepts up to 0.75 m between the authored
+strip and final surface; it does not attach strips to remote road decks.
 
 ## Verification
 
 ```sh
+godot --headless --path . --script addons/tests/check_final_lane_overlays.gd
 godot --headless --path . --script tools/check_lateral_joins.gd
 godot --headless --path . --script tools/check_lateral_merge_angles.gd
 godot --headless --path . --script tools/check_lateral_return_edits.gd

@@ -36,32 +36,31 @@ func _run() -> void:
 		return
 	_check(span._resolve_target_path() == path, "Span targets the same road as the array")
 	_check(is_equal_approx(span.end_offset, 20.0), "Default range covers full path")
-	_check(span.get_node("StartHandle").global_position.distance_to(path.to_global(Vector3.ZERO)) < 0.001, "Start handle lies on source start")
-	_check(span.get_node("EndHandle").global_position.distance_to(path.to_global(Vector3(0, 0, -20))) < 0.001, "End handle lies on source end")
+	_check(not span.has_node("StartHandle") and not span.has_node("EndHandle"), "Runtime span creates no editor handles")
+	_check(not span.is_processing(), "Runtime span does not poll editor controls")
 	_check(props.get_node("GeneratedSplineProps").get_child_count() == 10, "Default span retains full connected fence")
-	span.get_node("StartHandle").global_position = path.to_global(Vector3(0, 0, -4))
-	span.get_node("EndHandle").global_position = path.to_global(Vector3(0, 0, -10))
-	span._update_offsets_from_handles()
+	span.start_offset = 4
+	span.end_offset = 10
 	props.regenerate()
-	_check(absf(span.start_offset - 4) < 0.001 and absf(span.end_offset - 10) < 0.001, "Dragging endpoints updates min/max offsets")
-	_check(props.get_node("GeneratedSplineProps").get_child_count() == 3, "Dragged span limits connected fence length")
+	_check(absf(span.start_offset - 4) < 0.001 and absf(span.end_offset - 10) < 0.001, "Runtime offsets remain editable without handles")
+	_check(props.get_node("GeneratedSplineProps").get_child_count() == 3, "Runtime span limits connected fence length")
 	var signature: String = props._build_signature()
 	for repeat in range(20):
 		props._ensure_default_span()
 		span._update_offsets_from_handles()
-	_check(props._build_signature() == signature and props.get_node("PropSpan") == span, "Stationary handles retain range, identity and signature")
+	_check(props._build_signature() == signature and props.get_node("PropSpan") == span, "Runtime span retains range, identity and signature")
 	props.fit_segments_to_path = false
 	props.regenerate()
 	_check(props.get_node("GeneratedSplineProps").get_child_count() == 4, "Span also limits independent props")
 	var nested := PROPS.new()
 	path.add_child(nested)
-	_check(nested.source_paths == [NodePath("..")] and nested.get_node("PropSpan")._resolve_target_path() == path, "Direct Path3D child keeps automatic source and handles")
+	_check(nested.source_paths == [NodePath("..")] and nested.get_node("PropSpan")._resolve_target_path() == path, "Direct Path3D child keeps automatic source and span")
 	var late := PROPS.new()
 	world.add_child(late)
 	_check(not late.has_node("PropSpan"), "No guessed span before a source is assigned")
 	late.source_paths = [NodePath("../Road/Path")]
 	late.regenerate()
-	_check(late.has_node("PropSpan"), "Assigning Source Paths after ready creates handles on regeneration")
+	_check(late.has_node("PropSpan") and not late.has_node("PropSpan/EndHandle"), "Late source assignment creates runtime span without editor handles")
 	var other := path.duplicate() as Path3D
 	other.name = "Other"
 	for child in other.get_children():

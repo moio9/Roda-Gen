@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://c6i0e34cagr3u"]
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_oknyu"]
-
-[node name="Node3D" type="MeshInstance3D" unique_id=1951301460]
-mesh = SubResource("CapsuleMesh_oknyu")

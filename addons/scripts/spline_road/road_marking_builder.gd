@@ -392,11 +392,14 @@ func _paint_stop_lines(context: Dictionary, s0: float, s1: float, ext0: Vector2,
 		var finish := minf(float(rule.end), float(_path_lengths.get(_active_path_id, INF)))
 		if finish <= rule.start:
 			continue
+		var stop_inset := minf(maxf(0.0, float(rule.get("stop_line_inset", 0.0))), (finish - rule.start) * 0.5)
+		var stop_start: float = rule.start + stop_inset
+		var stop_end := finish - stop_inset
 		var spans: Array[Vector2] = []
 		if rule.stop_line_at_start:
-			spans.append(Vector2(rule.start, minf(finish, rule.start + rule.stop_line_width)))
+			spans.append(Vector2(stop_start, minf(finish, stop_start + rule.stop_line_width)))
 		if rule.stop_line_at_end and is_finite(finish):
-			spans.append(Vector2(maxf(rule.start, finish - rule.stop_line_width), finish))
+			spans.append(Vector2(maxf(rule.start, stop_end - rule.stop_line_width), stop_end))
 		var key := Vector2i(rule.side, rule.lane)
 		if not lane_spans.has(key):
 			lane_spans[key] = []

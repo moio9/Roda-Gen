@@ -19,9 +19,8 @@ func _ready() -> void:
 
 func sync(profile: Path3D, geometry_signature: String, selected: bool) -> void:
 	_profile = profile
-	_road = profile.get_parent() as Node3D
-	while _road != null and not _road.has_method("get_path_surface_frame"):
-		_road = _road.get_parent() as Node3D
+	if not is_instance_valid(_road) or not profile in _road._resolve_paths():
+		_road = _find_road(profile.get_tree().edited_scene_root, profile)
 	_ensure_handles()
 	if appearance == null or profile.curve == null or profile.curve.point_count < 2:
 		hide()
@@ -123,9 +122,10 @@ func move_endpoint(ending: bool, world_position: Vector3) -> void:
 
 func _lane_points(distance: float) -> PackedVector3Array:
 	var frame: Dictionary = _road.get_path_surface_frame(_profile, distance) if _road != null else {}
-	var center: Vector3 = frame.get("center", _profile.to_global(_profile.curve.sample_baked(distance, true)))
-	var up: Vector3 = frame.get("up", Vector3.UP)
-	var right: Vector3 = frame.get("right", _profile.global_basis.x)
+	var posture := _profile.global_transform * _profile.curve.sample_baked_with_rotation(distance, true, true)
+	var center: Vector3 = frame.get("center", posture.origin)
+	var up: Vector3 = frame.get("up", posture.basis.y.normalized())
+	var right: Vector3 = frame.get("right", -posture.basis.x.normalized())
 	var layout: Dictionary = _profile.get_lane_layout_at_offset(distance)
 	var width: float = layout.lane_width
 	var extent: float = layout.left_extent if appearance.side < 0 else layout.right_extent
@@ -135,6 +135,18 @@ func _lane_points(distance: float) -> PackedVector3Array:
 	return PackedVector3Array([center + right * appearance.side * inner,
 		center + right * appearance.side * outer,
 		center + right * appearance.side * (inner + outer) * 0.5])
+
+
+func _find_road(node: Node, profile: Path3D) -> Node3D:
+	if node == null:
+		return null
+	if node.has_method("get_path_surface_frame") and profile in node._resolve_paths():
+		return node as Node3D
+	for child in node.get_children():
+		var found := _find_road(child, profile)
+		if found != null:
+			return found
+	return null
 
 
 func _rebuild_preview() -> void:

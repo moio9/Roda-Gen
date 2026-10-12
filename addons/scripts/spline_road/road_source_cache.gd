@@ -64,6 +64,7 @@ func path_key(path: Path3D, distances: PackedFloat32Array, transform: Transform3
 			profile.append(path.get(property))
 		for transition in path.point_lane_transition_curves:
 			profile.append(_curve_key(transition))
+		profile.append(path.get_lane_section_geometry())
 	return var_to_bytes([_settings, transform, distances, curve.get("_data"), curve.closed,
 		curve.up_vector_enabled, curve.bake_interval, profile])
 
@@ -123,6 +124,10 @@ func _profile_support(path: Path3D, distances: Variant, length: float) -> Array:
 	if path.get_script() == null:
 		return []
 	var support: Array = []
+	for section in path.get_lane_section_geometry():
+		var end: float = section.end if section.end > 0.0 else length
+		if section.start <= distances[distances.size() - 1] and end >= distances[0]:
+			support.append(section)
 	for property in EDGE_SETTINGS:
 		support.append(path.get(property))
 	if not path.lane_profile_enabled:

@@ -51,6 +51,12 @@ class_name SplinePropArray3D
 @export var avoid_other_path_endpoints := true
 @export var avoid_intersections_in_center_mode := false
 @export_range(0.0, 100.0, 0.1, "or_greater", "suffix:m") var intersection_clear_radius := 4.0
+@export_group("Road Surface Avoidance")
+## Skip whole props/fence segments whose transformed model base overlaps final asphalt.
+## Uses Road Network Source, or the source paths' road ancestors when empty.
+@export var avoid_road_surface := false
+## Maximum vertical gap between the prop base and asphalt. Keeps separate bridge levels independent.
+@export_range(0.01, 10.0, 0.05, "or_greater", "suffix:m") var road_avoidance_height_tolerance := 0.75
 @export_group("Distance Ranges")
 @export_enum("Disabled", "Only In Ranges", "Exclude Ranges") var ranges_mode := 1
 @export_enum("Manual Array", "Span Nodes", "Manual + Span Nodes") var range_source_mode := 1
@@ -141,6 +147,8 @@ var _connected_terrain_source: Node
 var _placement_cache := preload("./prop_placement_cache.gd").new()
 var _output_cache := preload("./prop_output_cache.gd").new()
 var _segment_fitter := preload("./prop_segment_fitter.gd").new()
+var _road_avoidance := preload("./prop_road_avoidance.gd").new()
+var _road_avoidance_pending := false
 
 
 ## Source placement and native mesh output reuse. Idle built-in terrain can be
@@ -149,6 +157,8 @@ func get_placement_rebuild_stats() -> Dictionary:
 	var result: Dictionary = _placement_cache.stats.duplicate(true)
 	result.merge(_output_cache.stats)
 	result["pending_terrain"] = _terrain_regeneration_pending
+	result["pending_road"] = _road_avoidance_pending
+	result["road_surface_rejected"] = _road_avoidance.rejected
 	return result
 
 
@@ -195,6 +205,11 @@ func _process(_delta: float) -> void:
 	if Engine.is_editor_hint():
 		# Source Paths is usually assigned after the new node has entered the tree.
 		_ensure_default_span()
+	if _road_avoidance_pending:
+		if not _can_generate() or (avoid_road_surface and _road_avoidance.pending(self)):
+			return
+		regenerate()
+		return
 	if _terrain_regeneration_pending:
 		if not _can_generate():
 			return
@@ -204,6 +219,9 @@ func _process(_delta: float) -> void:
 		regenerate()
 		return
 	if not Engine.is_editor_hint():
+		if avoid_road_surface and _road_avoidance.changed(self) and _can_generate():
+			regenerate()
+			return
 		if fit_segments_to_path and (item_scene != null or item_mesh != null) and _segment_fitter.road_changed(self) and _can_generate():
 			regenerate()
 		return
@@ -260,6 +278,8 @@ func _set_render_mode(value: int) -> void:
 
 
 func _get_configuration_warnings() -> PackedStringArray:
+	if avoid_road_surface and _road_avoidance.sources(self).is_empty():
+		return PackedStringArray(["Avoid Road Surface needs a Road Network Source, or source paths under a RoadNetworkCreator3D."])
 	if render_mode == RENDER_MULTIMESH and item_scene != null:
 		return PackedStringArray([
 			"MultiMesh applies to Item Mesh only. Item Scene takes priority and is generated as individual nodes. Clear Item Scene and assign Item Mesh to use MultiMesh.",
@@ -311,9 +331,11 @@ func regenerate() -> void:
 		return
 	_ensure_default_span()
 	_terrain_regeneration_pending = false
+	_road_avoidance_pending = false
 	if Engine.is_editor_hint():
 		update_configuration_warnings()
 	if item_scene == null and item_mesh == null:
+		_road_avoidance.clear(self)
 		_bind_terrain_source(null)
 		_debug_log("regenerate skipped: set item_scene or item_mesh first.")
 		_clear_all_generated_nodes()
@@ -324,6 +346,7 @@ func regenerate() -> void:
 
 	var paths := _resolve_paths()
 	if paths.is_empty():
+		_road_avoidance.clear(self)
 		_bind_terrain_source(null)
 		_debug_log("regenerate skipped: no valid Path3D sources.")
 		_clear_all_generated_nodes()
@@ -335,6 +358,10 @@ func regenerate() -> void:
 		# provider is unavailable. Retry the latest requested configuration on idle.
 		_terrain_regeneration_pending = true
 		return
+	if avoid_road_surface and _road_avoidance.pending(self):
+		_road_avoidance_pending = true
+		return
+	_road_avoidance.prepare(self)
 	if fit_segments_to_path and not _segment_fitter.prepare(self):
 		push_warning("SplinePropArray3D: connected segments need a mesh with nonzero length along Z after Custom Transform.")
 		_last_signature = _build_signature()
@@ -562,6 +589,10 @@ func _scatter_path_uncached(
 				var placed := spawn_node.transform
 				spawn_node.transform = Transform3D(placed.basis.scaled(Vector3.ONE * uniform_scale), placed.origin)
 			var final_world_pos := parent_root.global_transform * spawn_node.transform.origin
+			if avoid_road_surface and _road_avoidance.blocked(parent_root.global_transform * spawn_node.transform, road_avoidance_height_tolerance):
+				if not use_transform_proxy:
+					spawn_node.free()
+				continue
 			if record_placements:
 				recorded_placements.append([spawn_node.transform, final_world_pos])
 			if use_multimesh:
@@ -610,6 +641,8 @@ func _emit_recorded_placements(path: Path3D, parent_root: Node3D, placements: Ar
 	var count := 0
 	for placement: Array in placements:
 		var transform_value: Transform3D = placement[0]
+		if avoid_road_surface and _road_avoidance.blocked(parent_root.global_transform * transform_value, road_avoidance_height_tolerance):
+			continue
 		if use_multimesh:
 			var world_pos: Vector3 = placement[1]
 			var size := maxf(1.0, multimesh_chunk_size)
@@ -1256,6 +1289,8 @@ func _build_signature() -> String:
 		str(avoid_other_path_endpoints),
 		str(avoid_intersections_in_center_mode),
 		str(intersection_clear_radius),
+		str(avoid_road_surface),
+		str(road_avoidance_height_tolerance),
 		str(ranges_mode),
 		str(range_source_mode),
 		str(distance_ranges.size()),
@@ -1278,6 +1313,8 @@ func _build_signature() -> String:
 	]
 	for pair in distance_ranges:
 		parts.append(str(pair))
+	if avoid_road_surface:
+		parts.append(_road_avoidance.signature(self))
 	var road_network := get_node_or_null(road_network_source)
 	if road_network != null:
 		parts.append(str(road_network.global_transform))

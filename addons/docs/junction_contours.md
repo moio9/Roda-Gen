@@ -87,9 +87,8 @@ transforms participate in editor regeneration signatures. While final-road
 clipping is active, path-only incremental source caches are bypassed because
 their triangle replay does not represent the clipped output; spatial output
 resource reuse remains available. The XZ mask retains the existing ground-road
-limitation and is not a stacked-bridge terrain solver. The former
-`road_mesh_terrain.gd` and `poiana_terrain.gd` scripts are compatibility aliases
-of the shared generator.
+limitation and is not a stacked-bridge terrain solver. Examples use
+`TerrainTopologyBuilder3D` directly.
 
 New corner triangles currently rebuild on every generation. Source caches remain
 usable, but the legacy junction replay cache is bypassed for successful contour

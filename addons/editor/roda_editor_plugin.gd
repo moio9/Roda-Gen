@@ -4,6 +4,10 @@ extends EditorPlugin
 const HISTORY = preload("../scripts/spline_road/road_editor_history.gd")
 const PROFILE_GIZMO = preload("./road_profile_gizmo.gd")
 var profile_gizmo: EditorNode3DGizmoPlugin
+const SHAPE_GIZMO = preload("./road_shape_gizmo.gd")
+var shape_gizmo: EditorNode3DGizmoPlugin
+const SECTION_EDITOR = preload("./road_section_editor.gd")
+var section_editor: RefCounted
 const POINT_PROPERTIES := {
 	"modifier_radius": "selected_point_radius",
 	"modifier_custom_radius": "selected_point_custom_radius",
@@ -24,6 +28,11 @@ func _enter_tree() -> void:
 	HISTORY.manager = get_undo_redo()
 	profile_gizmo = PROFILE_GIZMO.new()
 	add_node_3d_gizmo_plugin(profile_gizmo)
+	shape_gizmo = SHAPE_GIZMO.new()
+	add_node_3d_gizmo_plugin(shape_gizmo)
+	section_editor = SECTION_EDITOR.new()
+	section_editor.setup(self)
+	set_input_event_forwarding_always_enabled()
 	EditorInterface.get_selection().selection_changed.connect(_handle_selection_changed)
 	add_undo_redo_inspector_hook_callback(_inspector_history)
 	if "--roda-height-modifier-tests" in OS.get_cmdline_user_args():
@@ -49,12 +58,18 @@ func _enter_tree() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Godot may enable scripted processing after _enter_tree. Never rely only
+	# on set_process(false) to keep test runners out of ordinary editor sessions.
+	var test_args := OS.get_cmdline_user_args()
+	if not ("--roda-prop-span-tests" in test_args or "--roda-lane-appearance-tests" in test_args):
+		set_process(false)
+		return
 	if EditorInterface.get_resource_filesystem().is_scanning():
 		return
 	var scene := EditorInterface.get_edited_scene_root()
 	if scene == null:
 		return
-	if "--roda-lane-appearance-tests" in OS.get_cmdline_user_args():
+	if "--roda-lane-appearance-tests" in test_args:
 		if scene.get_node_or_null("Road/Route") == null:
 			return
 		set_process(false)
@@ -67,8 +82,10 @@ func _process(_delta: float) -> void:
 
 
 func _exit_tree() -> void:
+	section_editor.cleanup()
 	EditorInterface.get_selection().selection_changed.disconnect(_handle_selection_changed)
 	remove_node_3d_gizmo_plugin(profile_gizmo)
+	remove_node_3d_gizmo_plugin(shape_gizmo)
 	remove_undo_redo_inspector_hook_callback(_inspector_history)
 	if HISTORY.manager == get_undo_redo():
 		HISTORY.manager = null
@@ -106,6 +123,13 @@ func _handle_selection_changed() -> void:
 		# Keep the proxy selected so its own Inspector fields and native 3D
 		# transform controls remain available after clicking it.
 		profile.select_point_index(int(node.get("point_index")))
+	section_editor.selection_changed()
+
+
+func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
+	if section_editor == null:
+		return AFTER_GUI_INPUT_PASS
+	return section_editor.forward_input(camera, event)
 
 
 func _run_editor_tests() -> void:

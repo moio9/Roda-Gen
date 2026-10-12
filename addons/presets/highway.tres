@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="SplineRoadPreset" format=3 uid="uid://qilc0w470ji5"]
 
-[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="res://addons/roda-gen/scripts/spline_road/road_preset.gd" id="1"]
+[ext_resource type="Script" uid="uid://btx3akhr1hkh3" path="../scripts/spline_road/road_preset.gd" id="1"]
 
 [sub_resource type="StandardMaterial3D" id="Concrete"]
 resource_name = "Highway Concrete"

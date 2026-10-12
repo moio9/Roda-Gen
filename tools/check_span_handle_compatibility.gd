@@ -35,6 +35,8 @@ func _run() -> void:
 	span.end_offset = 70
 	span.show_preview = false
 	road.add_child(span)
+	_add_callback_fixture_handles(span)
+	span._update_handles_from_offsets()
 	_check(span.get_node("StartHandle").global_position.distance_to(_world(path, 10)) < 0.001,
 		"prop start handle matches transformed path")
 	_check(span.get_node("EndHandle").global_position.distance_to(_world(path, 70)) < 0.001,
@@ -71,7 +73,7 @@ func _run() -> void:
 	deformer.span_length = 30
 	deformer.generate_collision = true
 	road.add_child(deformer)
-	deformer._ensure_span_handles()
+	_add_callback_fixture_handles(deformer)
 	deformer._update_span_handles_from_values()
 	_check(deformer._resolve_curve_span(path) == Vector2(10, 40), "deformer explicit span is preserved")
 	_check(deformer.get_node("StartHandle").global_position.distance_to(_world(path, 10)) < 0.001
@@ -109,6 +111,15 @@ func _run() -> void:
 	road.free()
 	print("SPAN_HANDLE_COMPATIBILITY_%s checks=%d" % ["FAILED" if failed else "OK", checks])
 	quit(1 if failed else 0)
+
+
+func _add_callback_fixture_handles(parent: Node) -> void:
+	# Runtime intentionally creates no handles. This callback-only test supplies
+	# stand-ins explicitly; real editor creation is covered by editor tests.
+	for label in ["StartHandle", "EndHandle"]:
+		var marker := Marker3D.new()
+		marker.name = label
+		parent.add_child(marker)
 
 
 func _world(path: Path3D, offset: float) -> Vector3:

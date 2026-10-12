@@ -332,9 +332,7 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		_sync_point_handles()
 	else:
-		var handles := get_node_or_null(POINT_HANDLES_NAME)
-		if handles != null:
-			handles.queue_free()
+		preload("./editor_preview_cleanup.gd").remove_runtime_children(self, [POINT_HANDLES_NAME])
 		set_process(false)
 
 

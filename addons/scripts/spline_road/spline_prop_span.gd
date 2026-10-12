@@ -33,7 +33,11 @@ var _last_preview_signature := ""
 
 
 func _ready() -> void:
-	set_process(true)
+	set_process(Engine.is_editor_hint())
+	if not Engine.is_editor_hint():
+		preload("./editor_preview_cleanup.gd").remove_runtime_children(self,
+			[START_HANDLE_NAME, END_HANDLE_NAME, PREVIEW_NODE_NAME])
+		return
 	_ensure_handles()
 	_update_handles_from_offsets()
 	_update_preview()
@@ -76,6 +80,8 @@ func get_range_for_path(path: Path3D) -> Dictionary:
 
 
 func _ensure_handles() -> void:
+	if not Engine.is_editor_hint():
+		return
 	if _find_handle(START_HANDLE_NAME) == null:
 		var start := Marker3D.new()
 		start.name = START_HANDLE_NAME

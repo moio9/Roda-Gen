@@ -1,5 +1,5 @@
 [gd_scene load_steps=3 format=3]
-[ext_resource type="Script" path="res://addons/roda-gen/scripts/spline_road/terrain_height_modifier.gd" id="1"]
+[ext_resource type="Script" path="../../scripts/spline_road/terrain_height_modifier.gd" id="1"]
 [sub_resource type="Curve3D" id="Curve"]
 _data = {"points": PackedVector3Array(0,0,0, 0,0,0, -10,0,0, 0,0,0, 0,0,0, 0,2,0, 0,0,0, 0,0,0, 10,0,0), "tilts": PackedFloat32Array(0,0,0)}
 point_count = 3

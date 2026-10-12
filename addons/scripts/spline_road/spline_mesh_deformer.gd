@@ -131,7 +131,9 @@ func _ready() -> void:
 		_ensure_span_handles()
 		_update_span_handles_from_values()
 		_queue_regenerate()
-	elif generate_in_editor or not Engine.is_editor_hint():
+	else:
+		preload("./editor_preview_cleanup.gd").remove_runtime_children(self,
+			[START_HANDLE_NAME, END_HANDLE_NAME])
 		regenerate()
 
 
@@ -1109,6 +1111,8 @@ func _sync_span_handles() -> void:
 
 
 func _ensure_span_handles() -> void:
+	if not Engine.is_editor_hint():
+		return
 	if get_node_or_null(START_HANDLE_NAME) == null:
 		var start := Marker3D.new()
 		start.name = START_HANDLE_NAME

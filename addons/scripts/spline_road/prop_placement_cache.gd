@@ -66,6 +66,9 @@ func begin_build(props: Node3D) -> void:
 			_ground_provider = provider
 	if props.get_script() != load(props_script_path):
 		_bypass_reason = "custom_props"
+	elif props.avoid_road_surface:
+		# Recheck full transformed footprints against the latest final asphalt.
+		_bypass_reason = "road_surface_avoidance"
 	elif props.fit_segments_to_path:
 		_bypass_reason = "connected_segments"
 	elif road == null or road.get_script() != load(road_script_path):

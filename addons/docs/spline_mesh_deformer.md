@@ -15,6 +15,8 @@ The output updates in the editor. Use `Regenerate Curved Mesh` to force an immed
 ## Start and end handles
 
 `Show Span Handles` creates draggable `StartHandle` and `EndHandle` markers in the 3D editor, like `SplinePropSpan3D`.
+Saved Start/End markers are removed from the runtime tree; only the authored span
+values and generated mesh/collision remain. No scene resave is required.
 
 - Drag either marker along the curve to set the generated range visually.
 - The range is written back to `Start Offset` and `Span Length`; a conflicting `End Trim` is cleared.

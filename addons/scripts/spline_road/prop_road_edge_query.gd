@@ -11,7 +11,7 @@ var _revision := -1
 var _transform := Transform3D.IDENTITY
 
 
-func configure(road: Node3D) -> void:
+func configure(road: Node3D, asphalt_only := false) -> void:
 	_cut.prepare(null, Transform3D.IDENTITY)
 	_source_id = road.get_instance_id() if road != null else 0
 	_revision = -1
@@ -24,6 +24,8 @@ func configure(road: Node3D) -> void:
 	var data: Dictionary = road.get_terrain_surface_data()
 	var vertices: PackedVector3Array = data.get("vertices", PackedVector3Array())
 	var indices: PackedInt32Array = data.get("indices", PackedInt32Array())
+	if asphalt_only:
+		indices = data.get("lane_indices", indices)
 	if vertices.is_empty() or indices.is_empty():
 		return
 	_cut.append_surface(vertices, indices, _transform)
@@ -139,9 +141,9 @@ func _height(interval: Dictionary, distance: float) -> float:
 	return triangle[0].y * (1.0 - u - v) + triangle[1].y * u + triangle[2].y * v
 
 
-func overlaps_footprint(corners: PackedVector3Array) -> bool:
+func overlaps_footprint(corners: PackedVector3Array, height_tolerance := HEIGHT_TOLERANCE) -> bool:
 	for i in [1, 2]:
-		for triangle: PackedVector3Array in _cut.intersect_surface(corners[0], corners[i], corners[i + 1], HEIGHT_TOLERANCE):
+		for triangle: PackedVector3Array in _cut.intersect_surface(corners[0], corners[i], corners[i + 1], height_tolerance):
 			var ab := Vector2(triangle[1].x - triangle[0].x, triangle[1].z - triangle[0].z)
 			var ac := Vector2(triangle[2].x - triangle[0].x, triangle[2].z - triangle[0].z)
 			if absf(ab.cross(ac)) > 0.00001:

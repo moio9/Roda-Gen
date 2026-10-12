@@ -269,6 +269,8 @@ var _terrain_surface_data: Dictionary = {}
 var _terrain_surface_revision := 0
 var _marking_rows: Array = []
 var _marking_exclusions: Dictionary = {}
+var _curve_width_report: Dictionary = {}
+var _curve_width_revision := 0
 
 
 
@@ -680,6 +682,10 @@ func regenerate() -> void:
 	var sockets: Array[Dictionary] = sampled["sockets"]
 	var socket_keys: Dictionary = sampled["socket_keys"]
 	var path_rows: Array = sampled["path_rows"]
+	if Engine.is_editor_hint():
+		_curve_width_report = preload("./road_curve_width_check.gd").analyze(verts, path_rows, normals)
+		_curve_width_report["path_ids"] = paths.map(func(path: Path3D): return path.get_instance_id())
+		_curve_width_revision += 1
 	var path_weld_snap: Array = sampled["path_weld_snap"]
 	var path_weld_allow_midpath: Array = sampled["path_weld_allow_midpath"]
 	var path_weld_strip_enabled: Array = sampled["path_weld_strip_enabled"]
@@ -3333,6 +3339,16 @@ func get_terrain_surface_data() -> Dictionary:
 func get_terrain_surface_revision() -> int:
 	return _terrain_surface_revision
 
+
+## Editor diagnostics for the source asphalt strips before junction trimming.
+## Returned data is read-only to callers; no detector runs during gameplay.
+func get_curve_width_report() -> Dictionary:
+	return _curve_width_report
+
+
+func get_curve_width_revision() -> int:
+	return _curve_width_revision
+
 func _assign_mesh(mesh: ArrayMesh) -> void:
 	_terrain_surface_data = mesh.get_meta("_roda_terrain_surface", {})
 	mesh.remove_meta("_roda_terrain_surface")
@@ -3597,6 +3613,8 @@ func _sync_generated_collision_shape(mi: MeshInstance3D, _mesh: ArrayMesh) -> vo
 
 
 func _clear_mesh_node() -> void:
+	_curve_width_report = {}
+	_curve_width_revision += 1
 	_terrain_surface_data = {}
 	_terrain_surface_revision += 1
 	_output_ready = false

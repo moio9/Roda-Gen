@@ -131,6 +131,16 @@ func sample_paths(paths: Array[Path3D], inv_global: Transform3D) -> Dictionary:
 				"adaptive path=%s enabled=%s override=%s advanced=%s anchors=%s step=%.3f radius=%.3f rows=%s"
 				% [path_idx, path_adaptive_enabled, path_has_adaptive_override, path_adaptive_advanced, anchors.size(), local_step, local_radius, distances.size()]
 			)
+		if path.has_method("get_lane_section_sample_offsets"):
+			var section_offsets: PackedFloat32Array = path.get_lane_section_sample_offsets()
+			if not section_offsets.is_empty():
+				distances.append_array(section_offsets)
+				distances.sort()
+				var unique := PackedFloat32Array()
+				for distance in distances:
+					if unique.is_empty() or distance - unique[unique.size() - 1] > 0.0001:
+						unique.append(distance)
+				distances = unique
 		if distances.size() < 2:
 			path_rows[path_idx] = rows_info
 			continue

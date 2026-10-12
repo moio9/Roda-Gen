@@ -32,6 +32,7 @@ const LANE_APPEARANCE = preload("./road_lane_appearance.gd")
 ## Per-lane markings and asphalt material, optionally limited to a distance range.
 ## Lane 1 is nearest the center; a later entry wins for the same lane/property.
 @export var lane_appearance_overrides: Array[LANE_APPEARANCE] = []
+const LANE_SECTION = preload("./road_lane_section.gd")
 ## Select a range's StartHandle/EndHandle to move its limits along the lane.
 @export var show_lane_appearance_handles := true
 @export_subgroup("Edges")
@@ -259,12 +260,11 @@ func apply_point_editor_transform(index: int, before: Transform3D, after: Transf
 
 
 func _ready() -> void:
-	set_process(true)
+	set_process(Engine.is_editor_hint())
 	_ensure_control_offset_curve_connection()
 	if not Engine.is_editor_hint():
-		var ranges := get_node_or_null("__LaneAppearanceHandles")
-		if ranges != null:
-			ranges.queue_free()
+		preload("./editor_preview_cleanup.gd").remove_runtime_children(self,
+			[HANDLES_NODE_NAME, "__LaneAppearanceHandles"])
 		return
 	_sync_point_widths()
 	if lane_profile_enabled or _has_lane_profile_storage():
@@ -773,10 +773,42 @@ func get_lane_extents_at_offset(offset: float) -> Vector2:
 	var left1 := float(_get_point_lane_count(i1, true)) * _get_point_lane_width(i1)
 	var right0 := float(_get_point_lane_count(i0, false)) * _get_point_lane_width(i0)
 	var right1 := float(_get_point_lane_count(i1, false)) * _get_point_lane_width(i1)
-	return Vector2(
+	var extents := Vector2(
 		maxf(0.0, lerpf(left0, left1, eased)),
 		maxf(0.0, lerpf(right0, right1, eased))
 	)
+	var width := lerpf(_get_point_lane_width(i0), _get_point_lane_width(i1), eased)
+	for section in lane_appearance_overrides:
+		if not section is LANE_SECTION or section.geometry_snapshot().is_empty():
+			continue
+		var weight: float = section.weight_at(offset, curve.get_baked_length())
+		if weight <= 0.0:
+			continue
+		var side := 0 if section.side < 0 else 1
+		extents[side] = maxf(extents[side], (clampi(section.lane, 1, 12) - 1 + weight) * width)
+	return extents
+
+
+func get_lane_section_geometry() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if not lane_profile_enabled:
+		return result
+	for section in lane_appearance_overrides:
+		if section is LANE_SECTION:
+			var data: Dictionary = section.geometry_snapshot()
+			if not data.is_empty():
+				result.append(data)
+	return result
+
+
+func get_lane_section_sample_offsets() -> PackedFloat32Array:
+	var result := PackedFloat32Array()
+	if not lane_profile_enabled or curve == null:
+		return result
+	for section in lane_appearance_overrides:
+		if section is LANE_SECTION:
+			result.append_array(section.sample_offsets(curve.get_baked_length()))
+	return result
 
 
 func get_lateral_join_group() -> String:
@@ -822,6 +854,7 @@ func get_width_profile_signature() -> String:
 		str(default_width),
 		str(point_widths.size()),
 		str(lane_profile_enabled),
+		str(get_lane_section_geometry()),
 	]
 	for w in point_widths:
 		parts.append(str(w))
@@ -848,6 +881,7 @@ func get_dependent_width_profile_signature() -> String:
 		str(default_width),
 		str(point_widths.size()),
 		str(lane_profile_enabled),
+		str(get_lane_section_geometry()),
 	]
 	for w in point_widths:
 		parts.append(str(w))
@@ -1592,6 +1626,7 @@ func _update_handle_node(handle: MeshInstance3D, index: int, count: int) -> void
 			_get_point_lane_transition(index),
 			lane_profile_enabled
 		)
+	handle.update_gizmos()
 
 
 func _compute_point_forward(index: int, count: int) -> Vector3:

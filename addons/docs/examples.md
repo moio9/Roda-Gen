@@ -15,9 +15,6 @@ gameplay controller is included. All materials and meshes are self-contained.
 | [Wide chasm](../scenes/examples/wide_chasm.tscn) | One road spline with a 45 m deep right-side floor continuing to the terrain bounds | `Road/Ridge`, `Terrain` |
 | [Terrain spline continuation](../scenes/examples/terrain_spline_continuation.tscn) | Closed terrain spline with the entire interior filled at -35 m, not just a local ring | `Terrain/BasinBoundary` |
 
-For a larger, compressed mountain resort, open [Poiana Brașov](../scenes/examples/poiana_brasov.tscn).
-Its editing, terrain and forest details are in [the dedicated scene notes](poiana_brasov.md).
-
 ## Navigation
 
 - Hold right mouse and drag to orbit.
@@ -94,8 +91,7 @@ MultiMesh prop rendering are not enabled by these examples.
 
 To reuse in a consuming project, copy the examples folder and shader alongside
 the addon's existing `scenes` and `scripts` layout. No references to another
-game's assets or installed project paths are required. Brașov examples retain
-their existing scene scripts and settings.
+game's assets or installed project paths are required.
 
 The urban/highway terrain sits below the asphalt, with a `GroundSupport` plane
 beneath it. That plane is only appropriate for these flat examples.
@@ -115,8 +111,3 @@ generic script dependencies, the contour junction, actual acceleration-lane
 asphalt coverage, prop/deformer output,
 and working camera zoom/reset.
 The last command additionally saves previews to `/tmp/roda-example-*.png`.
-
-## Poiana to Brașov centre
-
-[Mapped 11.8 km road and roundabout](brasov_centru.md), with a camera tour for
-inspecting curves and grades without a vehicle. Uses the normal addon generators.

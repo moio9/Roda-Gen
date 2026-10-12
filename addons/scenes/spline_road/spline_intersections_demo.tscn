@@ -1,12 +1,12 @@
 [gd_scene format=4 uid="uid://c8v4vqlutonn7"]
 
-[ext_resource type="Script" uid="uid://cdaj44iqbrlce" path="res://addons/roda-gen/scripts/spline_road/spline_path_profile.gd" id="1_1swvb"]
-[ext_resource type="Script" uid="uid://ckrlea6rmmicl" path="res://addons/roda-gen/scripts/spline_road/spline_width_handle.gd" id="2_5oypt"]
-[ext_resource type="Script" uid="uid://w2jsoen0vrch" path="res://addons/roda-gen/scripts/spline_road/terrain_influence_path.gd" id="3_74wid"]
-[ext_resource type="Script" uid="uid://b8dn8sx6ln6xf" path="res://addons/roda-gen/scripts/spline_road/road_network_creator.gd" id="4_0spv3"]
-[ext_resource type="Texture2D" uid="uid://cwoll3wuslckf" path="res://icon.svg" id="5_layrr"]
-[ext_resource type="Script" uid="uid://dug85y00gliex" path="res://addons/roda-gen/scripts/spline_road/spline_prop_array.gd" id="6_cccr3"]
-[ext_resource type="Script" uid="uid://djle5d82pbj4d" path="res://addons/roda-gen/scripts/spline_road/spline_prop_span.gd" id="7_82kpo"]
+[ext_resource type="Script" uid="uid://cdaj44iqbrlce" path="../../scripts/spline_road/spline_path_profile.gd" id="1_1swvb"]
+[ext_resource type="Script" uid="uid://ckrlea6rmmicl" path="../../scripts/spline_road/spline_width_handle.gd" id="2_5oypt"]
+[ext_resource type="Script" uid="uid://w2jsoen0vrch" path="../../scripts/spline_road/terrain_influence_path.gd" id="3_74wid"]
+[ext_resource type="Script" uid="uid://b8dn8sx6ln6xf" path="../../scripts/spline_road/road_network_creator.gd" id="4_0spv3"]
+[ext_resource type="Texture2D" uid="uid://c4gf1bwyqmjq1" path="res://icon.svg" id="5_layrr"]
+[ext_resource type="Script" uid="uid://dug85y00gliex" path="../../scripts/spline_road/spline_prop_array.gd" id="6_cccr3"]
+[ext_resource type="Script" uid="uid://djle5d82pbj4d" path="../../scripts/spline_road/spline_prop_span.gd" id="7_82kpo"]
 
 [sub_resource type="Curve3D" id="Curve3D_A"]
 bake_interval = 3.8

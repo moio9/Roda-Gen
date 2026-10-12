@@ -34,6 +34,32 @@ For several source paths, add a SplinePropSpan3D child for each desired range
 and set its Target Path. Manual, combined and exclusion ranges keep their
 authored settings. These controls work for both independent and connected props.
 
+Start/End handles and the span preview exist only in the editor. At runtime,
+saved helper nodes are removed before generation, and new spans create no
+helpers. The `PropSpan` node and its authored offsets remain available so the
+same placement ranges still apply. No setting or scene resave is required.
+
+Enable **Road Surface Avoidance > Avoid Road Surface** to skip any prop or
+complete fence segment whose model base overlaps final asphalt. It works with
+Item Mesh, Item Scene, MultiMesh and connected segments, including at junctions.
+Use **Road Network Source** to choose the generator; when empty, the generators
+above the source paths are used. All asphalt in those generators participates,
+including roads that are not prop placement sources. Shoulders are excluded.
+
+The test uses the bottom rectangle of the combined mesh bounds, after child
+transforms and the final placement/custom transform. It is conservative for
+irregular models; shader deformation and collision-only scenes are not measured.
+**Road Avoidance Height Tolerance** is the allowed vertical gap from that base
+to asphalt (default 0.75 m), so a separate bridge above it does not remove props.
+Raise it if the model's base deliberately floats above the road. Rejected fence
+segments leave openings; they are not shortened or moved.
+
+The option is off by default. While enabled, each regeneration rechecks placement
+footprints instead of replaying the placement cache. Final-road edits trigger
+updates, and pending road generation preserves the previous props until the new
+surface is ready. A missing road source produces an Inspector warning and keeps
+placements. Press **Regenerate Props** when automatic updates are disabled.
+
 For a continuous fence or wall, enable **Placement > Fit Segments To Path**.
 Each module fits between two shared samples of the selected edge, so curves,
 varying road widths and grades do not leave the longitudinal gaps produced by
@@ -95,6 +121,7 @@ Run the focused check with a real renderer (the headless dummy renderer does
 not retain MultiMesh transforms):
 
 ```sh
+godot --path . --rendering-method forward_plus --script addons/tests/check_prop_road_avoidance.gd
 godot --path . --rendering-method forward_plus --script tools/check_prop_rendering.gd
 ```
 

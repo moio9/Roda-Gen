@@ -162,7 +162,15 @@ is still uploaded as one output.
 
 ## Validation
 
+For local editing directly in the viewport, enable **Road Sections** in the 3D
+toolbar after selecting a road/path, then click near the line you want to change.
+The popup changes that boundary within the selected interval and supports optional
+transverse stop lines. It can also add a tapered extra lane or stopping bay.
+See [Click-to-edit road sections](editor_workflow.md#click-to-edit-road-sections)
+for selection, range controls and Undo/Redo behavior.
+
 ```sh
+python3 addons/tests/check_editor_startup.py --godot /path/to/godot
 godot --headless --path . --script tools/check_road_markings.gd
 godot --headless --path . --script addons/tests/check_lane_appearance.gd
 godot --headless --path . --script addons/tests/check_appearance_optimization.gd
@@ -170,6 +178,10 @@ godot --path . --rendering-method forward_plus --resolution 960x720 --script add
 godot --editor --path . addons/scenes/lane_appearance_demo.tscn -- --roda-lane-appearance-tests
 godot --path . --rendering-method forward_plus --resolution 960x720 --script tools/render_road_markings.gd
 ```
+
+The startup check uses isolated projects to verify that ordinary editor sessions
+leave the scene untouched and do not run tests or quit. It also checks that the
+explicit prop-test command-line flag still starts its intended test runner.
 
 The geometry check covers all five styles, exact empty dash/double gaps,
 negative phase, left/right lane transitions, one-way lanes, width-only changes,

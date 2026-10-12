@@ -7,8 +7,7 @@ func _initialize() -> void:
 	var terrain_script := load("res://addons/scripts/spline_road/terrain_topology_builder.gd")
 	var prop_script := load("res://addons/scripts/spline_road/spline_prop_array.gd")
 	var deformer_script := load("res://addons/scripts/spline_road/spline_mesh_deformer.gd")
-	var mountain_script := load("res://addons/scripts/spline_road/mountain_terrain_strip.gd")
-	if profile_script == null or road_script == null or terrain_script == null or prop_script == null or deformer_script == null or mountain_script == null:
+	if profile_script == null or road_script == null or terrain_script == null or prop_script == null or deformer_script == null:
 		push_error("Lane profile scripts did not parse")
 		quit(1)
 		return
@@ -102,13 +101,10 @@ func _initialize() -> void:
 		return
 	var prop: Node3D = prop_script.new()
 	var deformer: Node3D = deformer_script.new()
-	var mountain: Node3D = mountain_script.new()
 	var prop_left := float(prop.call("_compute_side_offset", profile, offsets[1], path_curve.get_baked_length(), -1))
 	var prop_right := float(prop.call("_compute_side_offset", profile, offsets[1], path_curve.get_baked_length(), 1))
 	var deformer_left := float(deformer.call("_compute_side_offset", profile, offsets[1], -1))
 	var deformer_right := float(deformer.call("_compute_side_offset", profile, offsets[1], 1))
-	mountain.set("road_edge_clearance", 0.0)
-	var mountain_edges: Vector2 = mountain.call("_get_road_edges", profile, offsets[1], path_curve.get_baked_length())
 	if not is_equal_approx(prop_left, -3.5) or not is_equal_approx(prop_right, 7.0):
 		push_error("Prop edge placement ignored asymmetric lanes: left=%s right=%s" % [prop_left, prop_right])
 		quit(1)
@@ -117,13 +113,8 @@ func _initialize() -> void:
 		push_error("Curved mesh placement ignored asymmetric lanes: left=%s right=%s" % [deformer_left, deformer_right])
 		quit(1)
 		return
-	if not mountain_edges.is_equal_approx(Vector2(3.5, 7.0)):
-		push_error("Mountain terrain strip ignored asymmetric lanes: %s" % mountain_edges)
-		quit(1)
-		return
 	prop.free()
 	deformer.free()
-	mountain.free()
 	if quarter.y <= start.y or quarter.y >= middle.y:
 		push_error("Bezier transition did not interpolate the entering lane: %s" % quarter)
 		quit(1)
